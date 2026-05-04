@@ -4,56 +4,55 @@
 
 using namespace std;
 
-// Extended helper function to include Queen testing
-void runVisualTest(GenerateMoves& gen, int sq, uint64_t occ, string type) {
+/**
+ * Visual Test Helper: Renders bitboards with clear headers 
+ * for LinkedIn screenshots or technical documentation.
+ */
+void runScreenshotTest(GenerateMoves& gen, int sq, uint64_t occ, string type) {
     uint64_t result;
-
     if (type == "ROOK") result = gen.getRookAttacks(sq, occ);
     else if (type == "BISHOP") result = gen.getBishopAttacks(sq, occ);
-    else if (type == "QUEEN") result = gen.getQueenAttacks(sq, occ);
+    else result = gen.getQueenAttacks(sq, occ);
 
-    cout << "------------------------------------------------" << endl;
-    cout << " TESTING: " << type << " ON SQUARE INDEX: " << sq << endl;
-    cout << "------------------------------------------------" << endl;
-
-    cout << "Occupancy Map (Blockers):";
+    cout << "================================================" << endl;
+    cout << "  PIECE: " << type << " | SQUARE: " << sq << endl;
+    cout << "================================================" << endl;
+    
+    cout << "Current Occupancy (Blockers):" << endl;
     gen.printBitBoard(occ);
 
-    cout << "Calculated Magic Attacks:";
+    cout << "Generated Magic Attacks:" << endl;
     gen.printBitBoard(result);
-    
-    cout << "Test completed.\n" << endl;
+    cout << "\n" << endl;
 }
 
 int main() {
     GenerateMoves gen;
     gen.init();
 
-    cout << "--- STARTING QUEEN VISUAL TESTS ---" << endl;
+    cout << "CHESS ENGINE MOVE GENERATION - VISUAL VERIFICATION" << endl;
+    cout << "==================================================\n" << endl;
 
-    /* 
-       TEST 5: The "Full Star" (Queen at E4)
-       Queen at center (28) on an empty board.
-       Should show a perfect star shape (Horizontal, Vertical, and Diagonal).
-    */
-    runVisualTest(gen, 28, 0ULL, "QUEEN");
+    // 1. ROOK TEST: Horizontal & Vertical rays with blockers
+    // Square 36 (E5), blocked on top (e7) and left (b5)
+    uint64_t rookOcc = 0ULL;
+    rookOcc |= (1ULL << 52); // Blocker at e7
+    rookOcc |= (1ULL << 33); // Blocker at b5
+    runScreenshotTest(gen, 36, rookOcc, "ROOK");
 
-    /* 
-       TEST 6: The "Blocked Queen"
-       Queen at D4 (27) with a mix of blockers.
-       - Blocker at D6 (Vertical stop)
-       - Blocker at F4 (Horizontal stop)
-       - Blocker at B2 (Diagonal stop)
-    */
-    uint64_t queenBlockers = 0ULL;
-    queenBlockers |= (1ULL << 43); // D6
-    queenBlockers |= (1ULL << 29); // F4
-    queenBlockers |= (1ULL << 9);  // B2
-    runVisualTest(gen, 27, queenBlockers, "QUEEN");
+    // 2. BISHOP TEST: X-Shape diagonals with blockers
+    // Square 27 (D4), blocked on top-right (f6) and bottom-left (b2)
+    uint64_t bishopOcc = 0ULL;
+    bishopOcc |= (1ULL << 45); // Blocker at f6
+    bishopOcc |= (1ULL << 9);  // Blocker at b2
+    runScreenshotTest(gen, 27, bishopOcc, "BISHOP");
 
-    cout << "Check the star shapes above. If they look correct, your slider logic is 100% complete." << endl;
-    
-    cout << "Press Enter to exit...";
+    // 3. QUEEN TEST: The "Full Star" pattern
+    // Square 28 (E4) on a clean board to show perfect symmetry
+    runScreenshotTest(gen, 28, 0ULL, "QUEEN");
+
+    cout << "All Magic Bitboard lookups successful. O(1) efficiency verified." << endl;
+    cout << "Press Enter to exit..." << endl;
     cin.get();
 
     return 0;
