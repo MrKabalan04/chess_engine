@@ -339,3 +339,47 @@ void GenerateMoves::initPawnAttacks() {
 
     }
 }
+
+uint64_t GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces) {
+    uint64_t bit = (1ULL << sq);
+    uint64_t moves = 0ULL;
+    
+
+    if (side == 0) { 
+        uint64_t singlePush = (bit << 8);
+        if (singlePush && !(singlePush & occupied)) {
+            moves |= singlePush;
+            uint64_t doublePush = (singlePush << 8);
+            if ((bit & ROW_2) && !(doublePush & occupied)) {
+                moves |= doublePush;
+            }
+        }
+        moves |= (pawnMasks[0][sq] & opponentPieces);
+    } 
+    else { 
+
+        uint64_t singlePush = (bit >> 8);
+        if (singlePush && !(singlePush & occupied)) {
+            moves |= singlePush;
+            uint64_t doublePush = (singlePush >> 8);
+            if ((bit & ROW_7) && !(doublePush & occupied)) {
+                moves |= doublePush;
+            }
+        }
+        moves |= (pawnMasks[1][sq] & opponentPieces);
+    }
+
+    uint64_t promotionMoves = 0ULL;
+    uint64_t normalMoves = 0ULL;
+
+    if (side == 0) { 
+        promotionMoves = moves & ROW_8;
+        normalMoves = moves & ~ROW_8;
+    } else { 
+        promotionMoves = moves & ROW_1;
+        normalMoves = moves & ~ROW_1;
+    }
+
+    return moves;
+}
+

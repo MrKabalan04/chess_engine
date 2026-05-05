@@ -14,6 +14,8 @@ public:
     static const uint64_t COLUMN_A = 0x0101010101010101ULL;
     static const uint64_t COLUMN_H = 0x8080808080808080ULL;
     static const uint64_t ROW_1 = 0x00000000000000FFULL;
+    static const uint64_t ROW_2 = 0x000000000000FF00ULL; 
+    static const uint64_t ROW_7 = 0x00FF000000000000ULL;   
     static const uint64_t ROW_8 = 0xFF00000000000000ULL;
 
     // Precomputed move masks for each piece type and square
@@ -60,6 +62,8 @@ public:
     //Pawns 
 
     void initPawnAttacks();
+    uint64_t generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces);
+
 
 };
 
