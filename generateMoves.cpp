@@ -9,6 +9,9 @@ uint64_t GenerateMoves::rookTable[64][4096];
 uint64_t GenerateMoves::bishopTable[64][512];
 
 void GenerateMoves::init() {
+
+
+
     
     // Pre-defined Magic Numbers for Rooks (Proven working set)
     static const uint64_t rookMagicsLocal[64] = {
@@ -112,6 +115,8 @@ void GenerateMoves::init() {
         rookMasks[i] = rookMask(i);
         bishopMasks[i] = bishopMask(i);
     }
+
+    initPawnAttacks();
 
     // Populate the final Attack Tables using the pre-initialized data
     initMagicTables();
@@ -316,4 +321,21 @@ uint64_t GenerateMoves::setOccupancy(int index, uint64_t mask) {
 uint64_t GenerateMoves::getQueenAttacks(int sq, uint64_t occupied) {
     // A Queen's movement is the logical UNION of a Rook and a Bishop
     return getRookAttacks(sq, occupied) | getBishopAttacks(sq, occupied);
+}
+
+void GenerateMoves::initPawnAttacks() {
+    for (int sq = 0; sq <64; sq++){
+        uint64_t bit = (1ULL << sq);
+        pawnMasks[0][sq] = 0ULL;
+
+        if( bit & ~COLUMN_A) pawnMasks[0][sq] |= (bit << 7); // White Pawn captures to the left
+        if( bit & ~COLUMN_H) pawnMasks[0][sq] |= (bit << 9); // White Pawn captures to the right
+
+        pawnMasks[1][sq] = 0ULL;
+
+        if( bit & ~COLUMN_A) pawnMasks[1][sq] |= (bit >> 9); // Black Pawn captures to the left
+        if( bit & ~COLUMN_H) pawnMasks[1][sq] |= (bit >> 7); // Black Pawn captures to the right    
+
+
+    }
 }

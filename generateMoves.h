@@ -10,11 +10,18 @@ class Board;
 class GenerateMoves {
 public:
 
+
+    static const uint64_t COLUMN_A = 0x0101010101010101ULL;
+    static const uint64_t COLUMN_H = 0x8080808080808080ULL;
+    static const uint64_t ROW_1 = 0x00000000000000FFULL;
+    static const uint64_t ROW_8 = 0xFF00000000000000ULL;
+
     // Precomputed move masks for each piece type and square
     uint64_t knightMasks[64];
     uint64_t kingMasks[64];
     uint64_t rookMasks[64];
     uint64_t bishopMasks[64];
+    uint64_t pawnMasks[2][64];
 
     // Magic bitboards for rook attacks
     uint64_t rookMagics[64];
@@ -34,17 +41,26 @@ public:
     void printBitBoard(uint64_t bitboard);
 
     void initMagicTables();
+  
+    //ROOK
     uint64_t rookMask(int sq);
     uint64_t rookAttacksOnTheFly(int sq, uint64_t occupied);
     uint64_t getRookAttacks(int sq, uint64_t occupied);
 
     uint64_t setOccupancy(int index, uint64_t mask);
 
+    //BISHOP
     uint64_t bishopMask(int sq);
     uint64_t bishopAttacksOnTheFly(int sq, uint64_t occupied);
     uint64_t getBishopAttacks(int sq, uint64_t occupied);
 
+    //QUEEN
     uint64_t getQueenAttacks(int sq, uint64_t occupied);
+
+    //Pawns 
+
+    void initPawnAttacks();
+
 };
 
 #endif
