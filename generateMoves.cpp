@@ -2,6 +2,8 @@
 #include <iostream>
 #include <cstring>
 #include <cstdint>
+#include "types.h"
+
 
 using namespace std;
 
@@ -340,46 +342,70 @@ void GenerateMoves::initPawnAttacks() {
     }
 }
 
-uint64_t GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces) {
+void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list) {
     uint64_t bit = (1ULL << sq);
-    uint64_t moves = 0ULL;
-    
 
-    if (side == 0) { 
+    if (side == 0) { // WHITE
+        // 1. Single and Double Push
         uint64_t singlePush = (bit << 8);
         if (singlePush && !(singlePush & occupied)) {
-            moves |= singlePush;
-            uint64_t doublePush = (singlePush << 8);
-            if ((bit & ROW_2) && !(doublePush & occupied)) {
-                moves |= doublePush;
+            if (singlePush & ROW_8) { // Promotion
+                list.addMove(Move(sq, sq + 8, PROMOT_QUEEN));
+                list.addMove(Move(sq, sq + 8, PROMOT_ROOK));
+                list.addMove(Move(sq, sq + 8, PROMOT_BISHOP));
+                list.addMove(Move(sq, sq + 8, PROMOT_KNIGHT));
+            } else {
+                list.addMove(Move(sq, sq + 8, NORMAL));
+                uint64_t doublePush = (singlePush << 8);
+                if ((bit & ROW_2) && !(doublePush & occupied)) {
+                    list.addMove(Move(sq, sq + 16, DOUBLE_PUSH));
+                }
             }
         }
-        moves |= (pawnMasks[0][sq] & opponentPieces);
+        // 2. Normal Captures
+        uint64_t attacks = (pawnMasks[0][sq] & opponentPieces);
+        while (attacks) {
+            int targetSq = __builtin_ctzll(attacks);
+            if (bit & ROW_7) { // Capture with Promotion
+                list.addMove(Move(sq, targetSq, PROMOT_QUEEN));
+                list.addMove(Move(sq, targetSq, PROMOT_ROOK));
+                list.addMove(Move(sq, targetSq, PROMOT_BISHOP));
+                list.addMove(Move(sq, targetSq, PROMOT_KNIGHT));
+            } else {
+                list.addMove(Move(sq, targetSq, NORMAL));
+            }
+            attacks &= (attacks - 1);
+        }
     } 
-    else { 
-
+    else { // BLACK
         uint64_t singlePush = (bit >> 8);
         if (singlePush && !(singlePush & occupied)) {
-            moves |= singlePush;
-            uint64_t doublePush = (singlePush >> 8);
-            if ((bit & ROW_7) && !(doublePush & occupied)) {
-                moves |= doublePush;
+            if (singlePush & ROW_1) {
+                list.addMove(Move(sq, sq - 8, PROMOT_QUEEN));
+                list.addMove(Move(sq, sq - 8, PROMOT_ROOK));
+                list.addMove(Move(sq, sq - 8, PROMOT_BISHOP));
+                list.addMove(Move(sq, sq - 8, PROMOT_KNIGHT));
+            } else {
+                list.addMove(Move(sq, sq - 8, NORMAL));
+                uint64_t doublePush = (singlePush >> 8);
+                if ((bit & ROW_7) && !(doublePush & occupied)) {
+                    list.addMove(Move(sq, sq - 16, DOUBLE_PUSH));
+                }
             }
         }
-        moves |= (pawnMasks[1][sq] & opponentPieces);
+        uint64_t attacks = (pawnMasks[1][sq] & opponentPieces);
+        while (attacks) {
+            int targetSq = __builtin_ctzll(attacks);
+            if (bit & ROW_2) {
+                list.addMove(Move(sq, targetSq, PROMOT_QUEEN));
+                list.addMove(Move(sq, targetSq, PROMOT_ROOK));
+                list.addMove(Move(sq, targetSq, PROMOT_BISHOP));
+                list.addMove(Move(sq, targetSq, PROMOT_KNIGHT));
+            } else {
+                list.addMove(Move(sq, targetSq, NORMAL));
+            }
+            attacks &= (attacks - 1);
+        }
     }
-
-    uint64_t promotionMoves = 0ULL;
-    uint64_t normalMoves = 0ULL;
-
-    if (side == 0) { 
-        promotionMoves = moves & ROW_8;
-        normalMoves = moves & ~ROW_8;
-    } else { 
-        promotionMoves = moves & ROW_1;
-        normalMoves = moves & ~ROW_1;
-    }
-
-    return moves;
 }
 

@@ -2,6 +2,7 @@
 #define GENERATEMOVES_H
 #include <iostream>
 #include "board.h"
+#include "types.h"
 #include <cstdint>
 using namespace std;
 
@@ -62,7 +63,7 @@ public:
     //Pawns 
 
     void initPawnAttacks();
-    uint64_t generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces);
+    void generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list);
 
 
 };
