@@ -11,9 +11,6 @@ uint64_t GenerateMoves::rookTable[64][4096];
 uint64_t GenerateMoves::bishopTable[64][512];
 
 void GenerateMoves::init() {
-
-
-
     
     // Pre-defined Magic Numbers for Rooks (Proven working set)
     static const uint64_t rookMagicsLocal[64] = {
@@ -409,3 +406,25 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
     }
 }
 
+void GenerateMoves::generateLeapingMoves(int sq, PieceType type, uint64_t friendlyPieces, MoveList& list){
+    uint64_t moves = 0ULL;
+
+    if (type == KNIGHT) {
+        moves = knightMasks[sq];
+    }
+    else if (type == KING) {
+        moves = kingMasks[sq];
+    }
+
+    moves = moves & (~((uint64_t)friendlyPieces));
+
+    if (sq == 18 && type == KNIGHT && __builtin_popcountll(moves) == 8) {
+        cout << "DEBUG ERROR: Friendly mask was ignored! Friendly value: " << friendlyPieces << endl;
+    }
+
+    while (moves) {
+        int targetSq = __builtin_ctzll(moves);
+        list.addMove(Move(sq, targetSq, NORMAL));
+        moves &= (moves - 1);
+    }
+}
