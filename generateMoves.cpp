@@ -428,3 +428,25 @@ void GenerateMoves::generateLeapingMoves(int sq, PieceType type, uint64_t friend
         moves &= (moves - 1);
     }
 }
+
+void GenerateMoves::generateSlidingMoves(int sq, PieceType type, uint64_t occupied, uint64_t friendlyPieces, MoveList& list){
+    uint64_t attacks = 0ULL;
+    if (type == ROOK){
+        attacks = getRookAttacks(sq, occupied);
+    }
+    else if (type == BISHOP){
+        attacks = getBishopAttacks(sq, occupied);
+    }
+    else if (type == QUEEN){
+        attacks = getQueenAttacks(sq, occupied);
+    }
+
+    attacks = attacks & (~((uint64_t)friendlyPieces));
+
+    while (attacks) {
+        int targetSq = __builtin_ctzll(attacks);
+        list.addMove(Move(sq, targetSq, NORMAL));
+        attacks &= (attacks - 1);
+    }
+
+}

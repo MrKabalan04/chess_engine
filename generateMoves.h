@@ -67,7 +67,7 @@ public:
 
     //Leapers (Knight and King)
     void generateLeapingMoves(int sq, PieceType type, uint64_t friendlyPieces, MoveList& list);
-
+    void generateSlidingMoves(int sq, PieceType type, uint64_t occupied, uint64_t friendlyPieces, MoveList& list);
 };
 
 #endif

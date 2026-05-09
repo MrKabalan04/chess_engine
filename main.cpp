@@ -1,42 +1,50 @@
 #include "generateMoves.h"
 #include <iostream>
+#include <string>
 
 using namespace std;
 
-void testLeapingMoves(GenerateMoves& gen, int sq, PieceType type, uint64_t friendly, string desc) {
+void testSlidingMoves(GenerateMoves& gen, int sq, PieceType type, uint64_t occupied, uint64_t friendly, string pieceName) {
     MoveList list;
-    gen.generateLeapingMoves(sq, type, friendly, list);
+    gen.generateSlidingMoves(sq, type, occupied, friendly, list);
 
-    cout << "--- TEST: " << desc << " ---" << endl;
-    cout << "Square: " << sq << " | Total Moves: " << list.count << endl;
-    
+    cout << "===== Testing " << pieceName << " at Square " << sq << " =====" << endl;
+    cout << "Total Moves Found: " << list.count << endl;
+
+    uint64_t movesBitboard = 0ULL;
     for (int i = 0; i < list.count; i++) {
-        cout << "  Move " << i << ": To " << list.moves[i].getTo() << endl;
+        movesBitboard |= (1ULL << list.moves[i].getTo());
     }
-    cout << "--------------------------------------\n" << endl;
+    
+    cout << "Moves Visualization (1 = possible move):" << endl;
+    gen.printBitBoard(movesBitboard);
+    cout << "==========================================\n" << endl;
 }
 
 int main() {
     GenerateMoves gen;
     gen.init(); 
 
-    MoveList list;
-    int knightSq = 18; // d3
+    int testSq = 27; 
 
-    uint64_t myFriendlyPieces = (1ULL << 29); 
-
-    cout << "Testing with Friendly Mask:" << endl;
-    gen.printBitBoard(myFriendlyPieces);
-
-    gen.generateLeapingMoves(knightSq, KNIGHT, myFriendlyPieces, list);
-
-    cout << "Final Knight Moves Count: " << list.count << endl; 
     
-    for (int i = 0; i < list.count; i++) {
-        if (list.moves[i].getTo() == 29) {
-            cout << "CRITICAL ERROR: Square 29 is STILL in the list!" << endl;
-        }
-    }
+    
+    uint64_t blockers = (1ULL << 43) | (1ULL << 25); 
+    uint64_t friendly = (1ULL << 25); 
+    
+    uint64_t occupied = (1ULL << testSq) | blockers;
+
+    cout << "--- BLOCKERS (Enemy at 43, Friendly at 25) ---" << endl;
+    gen.printBitBoard(blockers);
+
+    //ROOK
+    testSlidingMoves(gen, testSq, ROOK, occupied, friendly, "ROOK");
+
+    //BISHOP
+    testSlidingMoves(gen, testSq, BISHOP, occupied, friendly, "BISHOP");
+
+    //QUEEN
+    testSlidingMoves(gen, testSq, QUEEN, occupied, friendly, "QUEEN");
 
     return 0;
 }
