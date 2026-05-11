@@ -7,12 +7,19 @@
 
 using namespace std;
 
+inline int getIndexOfLSB(uint64_t bitboard) {
+    if (bitboard == 0) return -1; // احتياطاً
+    return __builtin_ctzll(bitboard);
+}
+
 uint64_t GenerateMoves::rookTable[64][4096];
 uint64_t GenerateMoves::bishopTable[64][512];
 
 void GenerateMoves::init() {
-    
-    // Pre-defined Magic Numbers for Rooks (Proven working set)
+
+    // =========================
+    // ROOK MAGIC NUMBERS
+    // =========================
     static const uint64_t rookMagicsLocal[64] = {
         0x8a80104000800020ULL, 0x140002000100040ULL, 0x2801880a0017001ULL, 0x100081001000420ULL,
         0x200020010080420ULL, 0x3001c0002010008ULL, 0x8480008002000100ULL, 0x2080088004402900ULL,
@@ -33,93 +40,141 @@ void GenerateMoves::init() {
     };
 
     static const int rookRelevantBits[64] = {
-        12, 11, 11, 11, 11, 11, 11, 12,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        11, 10, 10, 10, 10, 10, 10, 11,
-        12, 11, 11, 11, 11, 11, 11, 12
+        12,11,11,11,11,11,11,12,
+        11,10,10,10,10,10,10,11,
+        11,10,10,10,10,10,10,11,
+        11,10,10,10,10,10,10,11,
+        11,10,10,10,10,10,10,11,
+        11,10,10,10,10,10,10,11,
+        11,10,10,10,10,10,10,11,
+        12,11,11,11,11,11,11,12
     };
 
-    // Pre-defined Magic Numbers for Bishops
+    // =========================
+    // BISHOP MAGIC NUMBERS
+    // =========================
     static const uint64_t bishopMagicsLocal[64] = {
-        0x40040844404084ULL, 0x2004208a004208ULL, 0x10190041080202ULL, 0x108060845042010ULL,
-        0x581104180800210ULL, 0x2112080446200010ULL, 0x1080820820060210ULL, 0x3c0808410220200ULL,
-        0x4050404440404ULL, 0x21001420088ULL, 0x24d0080801082102ULL, 0x1020a0a020400ULL,
-        0x40308200402ULL, 0x4011002100800ULL, 0x401484104104005ULL, 0x801010402020200ULL,
-        0x400210c3880100ULL, 0x404022024108200ULL, 0x810018200204102ULL, 0x4002801a02003ULL,
-        0x85040820080400ULL, 0x810102c808880400ULL, 0xe900410884800ULL, 0x8002020480840102ULL,
-        0x220200865090201ULL, 0x2010100a02021202ULL, 0x152048408022401ULL, 0x20080002081110ULL,
-        0x4001001021004000ULL, 0x800040400a011002ULL, 0xe4004081011002ULL, 0x1c004001012080ULL,
-        0x8004200962a00220ULL, 0x8422100208500202ULL, 0x2000402200300c08ULL, 0x8646020080080080ULL,
-        0x80020a0200100808ULL, 0x2010004880111000ULL, 0x623000a080011400ULL, 0x42008c0340209202ULL,
-        0x209188240001000ULL, 0x400408a884001800ULL, 0x110400a6080400ULL, 0x1840060a44020800ULL,
-        0x90080104000041ULL, 0x201011000808101ULL, 0x1a2208080504f080ULL, 0x8012020600211212ULL,
-        0x500861011240000ULL, 0x180806108200800ULL, 0x4000020e01040044ULL, 0x300000261044000aULL,
-        0x802241102020002ULL, 0x20906061210001ULL, 0x5a84841004010310ULL, 0x4010801011c04ULL,
-        0xa010109502200ULL, 0x4a02012000ULL, 0x500201010098b028ULL, 0x8040002811040900ULL,
-        0x28000010020204ULL, 0x6000020202d0240ULL, 0x8918844842082200ULL, 0x4010011029020020ULL
+        0x40040844404084ULL,0x2004208a004208ULL,0x10190041080202ULL,0x108060845042010ULL,
+        0x581104180800210ULL,0x2112080446200010ULL,0x1080820820060210ULL,0x3c0808410220200ULL,
+        0x4050404440404ULL,0x21001420088ULL,0x24d0080801082102ULL,0x1020a0a020400ULL,
+        0x40308200402ULL,0x4011002100800ULL,0x401484104104005ULL,0x801010402020200ULL,
+        0x400210c3880100ULL,0x404022024108200ULL,0x810018200204102ULL,0x4002801a02003ULL,
+        0x85040820080400ULL,0x810102c808880400ULL,0xe900410884800ULL,0x8002020480840102ULL,
+        0x220200865090201ULL,0x2010100a02021202ULL,0x152048408022401ULL,0x20080002081110ULL,
+        0x4001001021004000ULL,0x800040400a011002ULL,0xe4004081011002ULL,0x1c004001012080ULL,
+        0x8004200962a00220ULL,0x8422100208500202ULL,0x2000402200300c08ULL,0x8646020080080080ULL,
+        0x80020a0200100808ULL,0x2010004880111000ULL,0x623000a080011400ULL,0x42008c0340209202ULL,
+        0x209188240001000ULL,0x400408a884001800ULL,0x110400a6080400ULL,0x1840060a44020800ULL,
+        0x90080104000041ULL,0x201011000808101ULL,0x1a2208080504f080ULL,0x8012020600211212ULL,
+        0x500861011240000ULL,0x180806108200800ULL,0x4000020e01040044ULL,0x300000261044000aULL,
+        0x802241102020002ULL,0x20906061210001ULL,0x5a84841004010310ULL,0x4010801011c04ULL,
+        0xa010109502200ULL,0x4a02012000ULL,0x500201010098b028ULL,0x8040002811040900ULL,
+        0x28000010020204ULL,0x6000020202d0240ULL,0x8918844842082200ULL,0x4010011029020020ULL
     };
 
-    // Shifts for Bishop Magic Index calculation
-    static const int bishopShiftsLocal[64] = {
-        58, 59, 59, 59, 59, 59, 59, 58,
-        59, 59, 59, 59, 59, 59, 59, 59,
-        59, 59, 57, 57, 57, 57, 59, 59,
-        59, 59, 57, 55, 55, 57, 59, 59,
-        59, 59, 57, 55, 55, 57, 59, 59,
-        59, 59, 57, 57, 57, 57, 59, 59,
-        59, 59, 59, 59, 59, 59, 59, 59,
-        58, 59, 59, 59, 59, 59, 59, 58
+    static const int bishopRelevantBits[64] = {
+        6,5,5,5,5,5,5,6,
+        5,5,5,5,5,5,5,5,
+        5,5,7,7,7,7,5,5,
+        5,5,7,9,9,7,5,5,
+        5,5,7,9,9,7,5,5,
+        5,5,7,7,7,7,5,5,
+        5,5,5,5,5,5,5,5,
+        6,5,5,5,5,5,5,6
     };
 
+    // =========================
+    // OFFSETS (SAFE + FAST)
+    // =========================
+    static const int knightOffsets[8] = {
+        17,15,10,6,
+       -17,-15,-10,-6
+    };
+
+    static const int kingOffsets[8] = {
+        8,-8,1,-1,
+        9,7,-7,-9
+    };
+
+    // =========================
+    // INIT LOOP
+    // =========================
     for (int i = 0; i < 64; i++) {
+
         int col = i % 8;
-        int row = i / 8;
 
-        // Map local magic data to class members
-        this->rookMagics[i] = rookMagicsLocal[i];
-        this->rookShifts[i] = 64 - rookRelevantBits[i]; 
-        this->bishopMagics[i] = bishopMagicsLocal[i];
-        this->bishopShifts[i] = bishopShiftsLocal[i]; 
+        // -------------------------
+        // MAGIC DATA
+        // -------------------------
+        rookMagics[i] = rookMagicsLocal[i];
+        rookShifts[i] = 64 - rookRelevantBits[i];
 
-        // Generate Leaping Piece Masks (Knight)
+        bishopMagics[i] = bishopMagicsLocal[i];
+        bishopShifts[i] = 64 - bishopRelevantBits[i];
+
+        // -------------------------
+        // KNIGHT
+        // -------------------------
         uint64_t knightMoves = 0ULL;
-        uint64_t kingMoves = 0ULL;
-        
-        if (row <= 5 && col <= 6) knightMoves |= (1ULL << (i + 17));
-        if (row <= 5 && col >= 1) knightMoves |= (1ULL << (i + 15));
-        if (row <= 6 && col <= 5) knightMoves |= (1ULL << (i + 10));
-        if (row <= 6 && col >= 2) knightMoves |= (1ULL << (i + 6));
-        if (row >= 2 && col >= 1) knightMoves |= (1ULL << (i - 17));
-        if (row >= 2 && col <= 6) knightMoves |= (1ULL << (i - 15));
-        if (row >= 1 && col >= 2) knightMoves |= (1ULL << (i - 10));
-        if (row >= 1 && col <= 5) knightMoves |= (1ULL << (i - 6));
+
+        for (int k = 0; k < 8; k++) {
+            int t = i + knightOffsets[k];
+            if (t < 0 || t >= 64) continue;
+
+            int toCol = t % 8;
+            if (abs(toCol - col) > 2) continue;
+
+            knightMoves |= (1ULL << t);
+        }
+
         knightMasks[i] = knightMoves;
 
-        // Generate Leaping Piece Masks (King)
-        if (row <= 6) kingMoves |= (1ULL << (i + 8));
-        if (row >= 1) kingMoves |= (1ULL << (i - 8));
-        if (col <= 6) kingMoves |= (1ULL << (i + 1));
-        if (col >= 1) kingMoves |= (1ULL << (i - 1));
-        if (row <= 6 && col <= 6) kingMoves |= (1ULL << (i + 9));
-        if (row <= 6 && col >= 1) kingMoves |= (1ULL << (i + 7));
-        if (row >= 1 && col <= 6) kingMoves |= (1ULL << (i - 7));
-        if (row >= 1 && col >= 1) kingMoves |= (1ULL << (i - 9));
+        // -------------------------
+        // KING
+        // -------------------------
+        uint64_t kingMoves = 0ULL;
+
+        for (int k = 0; k < 8; k++) {
+            int t = i + kingOffsets[k];
+            if (t < 0 || t >= 64) continue;
+
+            int toCol = t % 8;
+            if (abs(toCol - col) > 1) continue;
+
+            kingMoves |= (1ULL << t);
+        }
+
         kingMasks[i] = kingMoves;
 
-        // Initialize Sliding Piece Masks (Crucial for Magic Bitboards)
+        // -------------------------
+        // SLIDERS
+        // -------------------------
         rookMasks[i] = rookMask(i);
         bishopMasks[i] = bishopMask(i);
     }
 
     initPawnAttacks();
-
-    // Populate the final Attack Tables using the pre-initialized data
     initMagicTables();
 }
+
+void GenerateMoves::generateKingMoves(int sq, int side, const Board& board, MoveList& list) {
+    uint64_t attacks = kingMasks[sq];
+    uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
+    uint64_t legalDestinations = attacks & ~friendlyPieces;
+    
+    int opponentColor = side ^ 1;
+
+    while (legalDestinations) {
+        int targetSq = __builtin_ctzll(legalDestinations); 
+        
+        if (!isSquareAttacked(targetSq, opponentColor, board)) {
+            list.addMove(Move(sq, targetSq, NORMAL));
+        }
+        
+        legalDestinations &= (legalDestinations - 1);
+    }
+}
+
 
 void GenerateMoves::initMagicTables() {
     memset(rookTable, 0, sizeof(rookTable));
@@ -164,12 +219,7 @@ void GenerateMoves::initMagicTables() {
     }
 }
 
-uint64_t GenerateMoves::getRookAttacks(int sq, uint64_t occupied) {
-occupied &= rookMasks[sq];
-    int idx = (int)((occupied * rookMagics[sq]) >> rookShifts[sq]);
-    return rookTable[sq][idx];
-}
-
+//Print Bitboard (For Debugging)
 void GenerateMoves::printBitBoard(uint64_t bitboard) {
     cout << "\n  a b c d e f g h\n  ----------------\n";
     for (int row = 7; row >= 0; row--) {
@@ -183,6 +233,7 @@ void GenerateMoves::printBitBoard(uint64_t bitboard) {
     cout << "  ----------------\n  a b c d e f g h\n\n";
 }
 
+//Rook Attacks
 uint64_t GenerateMoves::rookMask(int sq) {
     uint64_t mask = 0ULL;
     int r = sq / 8, c = sq % 8;
@@ -193,7 +244,45 @@ uint64_t GenerateMoves::rookMask(int sq) {
     return mask;
 }
 
+uint64_t GenerateMoves::getRookAttacks (int sq, uint64_t occupied) const {
+occupied &= rookMasks[sq];
+    int idx = (int)((occupied * rookMagics[sq]) >> rookShifts[sq]);
+    return rookTable[sq][idx];
+}
 
+uint64_t GenerateMoves::rookAttacksOnTheFly(int sq, uint64_t occ) {
+    uint64_t attacks = 0ULL;
+    int r = sq / 8, c = sq % 8;
+    for (int i = c + 1; i <= 7; i++) { 
+        uint64_t b = (1ULL << (r * 8 + i)); 
+        attacks |= b; 
+        if (b & occ) 
+        
+        break; 
+    }
+    for (int i = c - 1; i >= 0; i--) {
+        uint64_t b = (1ULL << (r * 8 + i)); 
+        attacks |= b; 
+        if (b & occ) 
+        break; 
+    }
+    for (int i = r + 1; i <= 7; i++) { 
+        uint64_t b = (1ULL << (i * 8 + c)); 
+        attacks |= b; 
+        if (b & occ) 
+        break; 
+    }
+    for (int i = r - 1; i >= 0; i--) { 
+        uint64_t b = (1ULL << (i * 8 + c)); 
+        attacks |= b; 
+        if (b & occ) 
+        break; 
+    }
+    return attacks;
+}
+//**********************************************/
+
+//Bishop Attacks
 uint64_t GenerateMoves::bishopMask(int sq){
     uint64_t mask = 0ULL;
     int r = sq / 8;
@@ -214,7 +303,6 @@ uint64_t GenerateMoves::bishopMask(int sq){
 
     return mask;
 }
-
 
 uint64_t GenerateMoves::bishopAttacksOnTheFly(int sq, uint64_t occ){
     uint64_t attacks = 0ULL;
@@ -266,46 +354,15 @@ uint64_t GenerateMoves::bishopAttacksOnTheFly(int sq, uint64_t occ){
 
 }
 
-uint64_t GenerateMoves::getBishopAttacks(int sq, uint64_t occupied){
+uint64_t GenerateMoves::getBishopAttacks(int sq, uint64_t occupied) const{
     occupied &= bishopMasks[sq];
     int idx = (int)((occupied * bishopMagics[sq]) >> bishopShifts[sq]);
     
     return bishopTable[sq][idx];
 }
+/**********************************************/
 
-
-
-uint64_t GenerateMoves::rookAttacksOnTheFly(int sq, uint64_t occ) {
-    uint64_t attacks = 0ULL;
-    int r = sq / 8, c = sq % 8;
-    for (int i = c + 1; i <= 7; i++) { 
-        uint64_t b = (1ULL << (r * 8 + i)); 
-        attacks |= b; 
-        if (b & occ) 
-        
-        break; 
-    }
-    for (int i = c - 1; i >= 0; i--) {
-        uint64_t b = (1ULL << (r * 8 + i)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    for (int i = r + 1; i <= 7; i++) { 
-        uint64_t b = (1ULL << (i * 8 + c)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    for (int i = r - 1; i >= 0; i--) { 
-        uint64_t b = (1ULL << (i * 8 + c)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    return attacks;
-}
-
+// Utility function to set occupancy based on index and mask (Used for Magic Bitboard Initialization)
 uint64_t GenerateMoves::setOccupancy(int index, uint64_t mask) {
     uint64_t occ = 0ULL;
     int bits = __builtin_popcountll(mask);
@@ -316,12 +373,16 @@ uint64_t GenerateMoves::setOccupancy(int index, uint64_t mask) {
     }
     return occ;
 }
+//**********************************************/
 
-uint64_t GenerateMoves::getQueenAttacks(int sq, uint64_t occupied) {
+// Queen Attacks (Combination of Rook and Bishop)
+uint64_t GenerateMoves::getQueenAttacks(int sq, uint64_t occupied) const {
     // A Queen's movement is the logical UNION of a Rook and a Bishop
     return getRookAttacks(sq, occupied) | getBishopAttacks(sq, occupied);
 }
+//**********************************************/
 
+//Pawns Movements
 void GenerateMoves::initPawnAttacks() {
     for (int sq = 0; sq <64; sq++){
         uint64_t bit = (1ULL << sq);
@@ -339,31 +400,38 @@ void GenerateMoves::initPawnAttacks() {
     }
 }
 
-void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list) {
+void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list, int enPassantSq) {
     uint64_t bit = (1ULL << sq);
 
-    if (side == 0) { // WHITE
-        // 1. Single and Double Push
+    if (side == 0) { // WHITE PAWNS
+        // 1. Single Push
         uint64_t singlePush = (bit << 8);
         if (singlePush && !(singlePush & occupied)) {
-            if (singlePush & ROW_8) { // Promotion
+            // Check if the push results in a Promotion (reaching Row 8)
+            if (singlePush & ROW_8) {
                 list.addMove(Move(sq, sq + 8, PROMOT_QUEEN));
                 list.addMove(Move(sq, sq + 8, PROMOT_ROOK));
                 list.addMove(Move(sq, sq + 8, PROMOT_BISHOP));
                 list.addMove(Move(sq, sq + 8, PROMOT_KNIGHT));
             } else {
+                // Regular move
                 list.addMove(Move(sq, sq + 8, NORMAL));
+                
+                // 2. Double Push (Only if the pawn is on its starting square and path is clear)
                 uint64_t doublePush = (singlePush << 8);
                 if ((bit & ROW_2) && !(doublePush & occupied)) {
                     list.addMove(Move(sq, sq + 16, DOUBLE_PUSH));
                 }
             }
         }
-        // 2. Normal Captures
+
+        // 3. Normal Captures
+        // Use precomputed attack masks and intersect with squares occupied by opponent
         uint64_t attacks = (pawnMasks[0][sq] & opponentPieces);
         while (attacks) {
             int targetSq = __builtin_ctzll(attacks);
-            if (bit & ROW_7) { // Capture with Promotion
+            // Check if capture results in promotion (pawn was on Row 7)
+            if (bit & ROW_7) {
                 list.addMove(Move(sq, targetSq, PROMOT_QUEEN));
                 list.addMove(Move(sq, targetSq, PROMOT_ROOK));
                 list.addMove(Move(sq, targetSq, PROMOT_BISHOP));
@@ -371,28 +439,45 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
             } else {
                 list.addMove(Move(sq, targetSq, NORMAL));
             }
-            attacks &= (attacks - 1);
+            attacks &= (attacks - 1); // Clear the processed bit
+        }
+
+        // 4. En Passant Capture
+        if (enPassantSq != -1) {
+            uint64_t epBit = (1ULL << enPassantSq);
+            // If the pawn's attack mask hits the en passant target square
+            if (pawnMasks[0][sq] & epBit) {
+                list.addMove(Move(sq, enPassantSq, EN_PASSANT));
+            }
         }
     } 
-    else { // BLACK
+    else { // BLACK PAWNS
+        // 1. Single Push
         uint64_t singlePush = (bit >> 8);
         if (singlePush && !(singlePush & occupied)) {
+            // Check if push results in Promotion (reaching Row 1)
             if (singlePush & ROW_1) {
                 list.addMove(Move(sq, sq - 8, PROMOT_QUEEN));
                 list.addMove(Move(sq, sq - 8, PROMOT_ROOK));
                 list.addMove(Move(sq, sq - 8, PROMOT_BISHOP));
                 list.addMove(Move(sq, sq - 8, PROMOT_KNIGHT));
             } else {
+                // Regular move
                 list.addMove(Move(sq, sq - 8, NORMAL));
+                
+                // 2. Double Push (Only if on starting row)
                 uint64_t doublePush = (singlePush >> 8);
                 if ((bit & ROW_7) && !(doublePush & occupied)) {
                     list.addMove(Move(sq, sq - 16, DOUBLE_PUSH));
                 }
             }
         }
+
+        // 3. Normal Captures
         uint64_t attacks = (pawnMasks[1][sq] & opponentPieces);
         while (attacks) {
             int targetSq = __builtin_ctzll(attacks);
+            // Check if capture results in promotion (pawn was on Row 2)
             if (bit & ROW_2) {
                 list.addMove(Move(sq, targetSq, PROMOT_QUEEN));
                 list.addMove(Move(sq, targetSq, PROMOT_ROOK));
@@ -403,24 +488,22 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
             }
             attacks &= (attacks - 1);
         }
+
+        // 4. En Passant Capture
+        if (enPassantSq != -1) {
+            uint64_t epBit = (1ULL << enPassantSq);
+            if (pawnMasks[1][sq] & epBit) {
+                list.addMove(Move(sq, enPassantSq, EN_PASSANT));
+            }
+        }
     }
 }
+//**********************************************/
 
-void GenerateMoves::generateLeapingMoves(int sq, PieceType type, uint64_t friendlyPieces, MoveList& list){
-    uint64_t moves = 0ULL;
-
-    if (type == KNIGHT) {
-        moves = knightMasks[sq];
-    }
-    else if (type == KING) {
-        moves = kingMasks[sq];
-    }
-
-    moves = moves & (~((uint64_t)friendlyPieces));
-
-    if (sq == 18 && type == KNIGHT && __builtin_popcountll(moves) == 8) {
-        cout << "DEBUG ERROR: Friendly mask was ignored! Friendly value: " << friendlyPieces << endl;
-    }
+// Leaping Pieces (Knight and King)
+void GenerateMoves::generateLeapingMoves(int sq, PieceType type, uint64_t friendlyPieces, MoveList& list) {
+    uint64_t moves = (type == KNIGHT) ? knightMasks[sq] : kingMasks[sq];
+    moves &= ~friendlyPieces;
 
     while (moves) {
         int targetSq = __builtin_ctzll(moves);
@@ -428,7 +511,9 @@ void GenerateMoves::generateLeapingMoves(int sq, PieceType type, uint64_t friend
         moves &= (moves - 1);
     }
 }
+//**********************************************/
 
+// Sliding Pieces (Rook, Bishop, Queen)
 void GenerateMoves::generateSlidingMoves(int sq, PieceType type, uint64_t occupied, uint64_t friendlyPieces, MoveList& list){
     uint64_t attacks = 0ULL;
     if (type == ROOK){
@@ -450,3 +535,84 @@ void GenerateMoves::generateSlidingMoves(int sq, PieceType type, uint64_t occupi
     }
 
 }
+/**********************************************/
+
+bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& board) {
+
+    uint64_t enemyPawns, enemyKnights, enemyKing, enemyBishops, enemyRooks, enemyQueens;
+
+    if (attackerColor == 0) { // WHITE
+        enemyPawns = board.whitePawns;
+        enemyKnights = board.whiteKnights;
+        enemyKing = board.whiteKing;
+        enemyBishops = board.whiteBishops;
+        enemyRooks = board.whiteRooks;
+        enemyQueens = board.whiteQueen;
+    } else { // BLACK
+        enemyPawns = board.blackPawns;
+        enemyKnights = board.blackKnights;
+        enemyKing = board.blackKing;
+        enemyBishops = board.blackBishops;
+        enemyRooks = board.blackRooks;
+        enemyQueens = board.blackQueen;
+    }
+
+    if (knightMasks[sq] & enemyKnights) return true;
+
+    if (kingMasks[sq] & enemyKing) return true;
+
+    if (pawnMasks[attackerColor][sq] & enemyPawns) return true;
+
+    if (getBishopAttacks(sq, board.occupied) & (enemyBishops | enemyQueens)) return true;
+
+    if (getRookAttacks(sq, board.occupied) & (enemyRooks | enemyQueens)) return true;
+
+    return false;
+}
+
+void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list) {
+    uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
+    uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
+    uint64_t occupied = board.occupied;
+
+    // Generate pawn moves
+    uint64_t pawns = (side == 0) ? board.whitePawns : board.blackPawns;
+    while (pawns) {
+        int sq = __builtin_ctzll(pawns);
+        generatePawnMoves(sq, side, occupied, opponentPieces, list, board.enPassantSquare);
+        pawns &= (pawns - 1);
+    }
+
+    // Generate knight moves
+    uint64_t knights = (side == 0) ? board.whiteKnights : board.blackKnights;
+    while (knights) {
+        int sq = __builtin_ctzll(knights);
+        generateLeapingMoves(sq, KNIGHT, friendlyPieces, list);
+        knights &= (knights - 1);
+    }
+
+    // Generate bishop moves
+    uint64_t bishops = (side == 0) ? board.whiteBishops : board.blackBishops;
+    while (bishops) {
+        int sq = __builtin_ctzll(bishops);
+        generateSlidingMoves(sq, BISHOP, occupied, friendlyPieces, list);
+        bishops &= (bishops - 1);
+    }
+
+    // Generate rook moves
+    uint64_t rooks = (side == 0) ? board.whiteRooks : board.blackRooks;
+    while (rooks) {
+        int sq = __builtin_ctzll(rooks);
+        generateSlidingMoves(sq, ROOK, occupied, friendlyPieces, list);
+        rooks &= (rooks - 1);
+    }
+
+    // Generate queen moves
+    uint64_t queens = (side == 0) ? board.whiteQueen : board.blackQueen;
+    while (queens) {
+        int sq = __builtin_ctzll(queens);
+        generateSlidingMoves(sq, QUEEN, occupied, friendlyPieces, list);
+        queens &= (queens - 1);
+    }
+
+    }

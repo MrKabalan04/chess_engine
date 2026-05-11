@@ -3,9 +3,16 @@
 
 #include <cstdint>
 
-enum PieceType {PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING};
+enum PieceType : int {
+    PAWN,
+    KNIGHT,
+    BISHOP,
+    ROOK,
+    QUEEN,
+    KING
+};
 
-enum MoveType{
+enum MoveType : uint8_t {
     NORMAL = 0,
     DOUBLE_PUSH = 1,
     EN_PASSANT = 2,
@@ -16,12 +23,16 @@ enum MoveType{
     PROMOT_KNIGHT = 7
 };
 
-
 struct Move {
     uint16_t data;
+
     Move() : data(0) {}
+
     Move(int from, int to, MoveType type) {
-        data = (from & 0x3F) | ((to & 0x3F) << 6) | ((type & 0xF) << 12);
+        data =
+            (from & 0x3F) |
+            ((to & 0x3F) << 6) |
+            ((type & 0xF) << 12);
     }
 
     int getFrom() const { return data & 0x3F; }
@@ -31,15 +42,12 @@ struct Move {
 
 struct MoveList {
     Move moves[256];
-    int count = 0;  
+    int count = 0;
 
-    void addMove(Move move){
-        if (count < 256){
-            moves[count] = move;
-            count++;
-        }
+    void addMove(Move move) {
+        if (count < 256)
+            moves[count++] = move;
     }
 };
 
 #endif
-

@@ -11,7 +11,6 @@ class Board;
 class GenerateMoves {
 public:
 
-
     static const uint64_t COLUMN_A = 0x0101010101010101ULL;
     static const uint64_t COLUMN_H = 0x8080808080808080ULL;
     static const uint64_t ROW_1 = 0x00000000000000FFULL;
@@ -42,32 +41,39 @@ public:
 
     void init();
     void printBitBoard(uint64_t bitboard);
-
     void initMagicTables();
   
     //ROOK
     uint64_t rookMask(int sq);
     uint64_t rookAttacksOnTheFly(int sq, uint64_t occupied);
-    uint64_t getRookAttacks(int sq, uint64_t occupied);
+    uint64_t getRookAttacks(int sq, uint64_t occupied) const;
 
     uint64_t setOccupancy(int index, uint64_t mask);
 
     //BISHOP
     uint64_t bishopMask(int sq);
     uint64_t bishopAttacksOnTheFly(int sq, uint64_t occupied);
-    uint64_t getBishopAttacks(int sq, uint64_t occupied);
+    uint64_t getBishopAttacks(int sq, uint64_t occupied) const;
 
     //QUEEN
-    uint64_t getQueenAttacks(int sq, uint64_t occupied);
+    uint64_t getQueenAttacks(int sq, uint64_t occupied) const;
+
+    //KING
+    void generateKingMoves(int sq, int side, const Board& board, MoveList& list);
 
     //Pawns 
-
     void initPawnAttacks();
-    void generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list);
+    void generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list, int enPassantSq);
 
     //Leapers (Knight and King)
     void generateLeapingMoves(int sq, PieceType type, uint64_t friendlyPieces, MoveList& list);
     void generateSlidingMoves(int sq, PieceType type, uint64_t occupied, uint64_t friendlyPieces, MoveList& list);
+
+    //Attack Detection
+    bool isSquareAttacked(int sq, int attackerColor, const Board& board);
+
+    void generateAllMoves(const Board& board, int side, MoveList& list);
+
 };
 
 #endif
