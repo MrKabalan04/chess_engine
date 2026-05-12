@@ -87,6 +87,37 @@ void Board::addPiece(int sq, int pieceType, bool isWhite)
     occupied |= bit;
 }
 
+void Board::removePiece(int sq, int pieceType, bool isWhite){
+    uint64_t bit = (1ULL << sq);
+    if (isWhite)
+    {
+        whitePieces &= ~bit;
+        switch (pieceType)
+        {
+            case PAWN: whitePawns &= ~bit; break;
+            case KNIGHT: whiteKnights &= ~bit; break;
+            case BISHOP: whiteBishops &= ~bit; break;
+            case ROOK: whiteRooks &= ~bit; break;
+            case QUEEN: whiteQueen &= ~bit; break;
+            case KING: whiteKing &= ~bit; break;
+        }
+    }
+    else
+    {
+        blackPieces &= ~bit;
+        switch (pieceType)
+        {
+            case PAWN: blackPawns &= ~bit; break;
+            case KNIGHT: blackKnights &= ~bit; break;
+            case BISHOP: blackBishops &= ~bit; break;
+            case ROOK: blackRooks &= ~bit; break;
+            case QUEEN: blackQueen &= ~bit; break;
+            case KING: blackKing &= ~bit; break;
+        }
+    }
+    occupied &= ~bit;
+}
+
 // =========================
 // INIT START POSITION
 // =========================
@@ -197,34 +228,13 @@ void Board::makeMove(Move move)
 
     int side = sideToMove;
     int opponent = side ^ 1;
-
-    uint64_t fromBit = 1ULL << from;
-    uint64_t toBit   = 1ULL << to;
-
     int movingPiece = getPieceAt(from);
     if (movingPiece == -1) return;
 
     // =========================
     // REMOVE PIECE (SAFE)
     // =========================
-    if (side == 0)
-    {
-        if (movingPiece == PAWN)   whitePawns &= ~fromBit;
-        if (movingPiece == KNIGHT) whiteKnights &= ~fromBit;
-        if (movingPiece == BISHOP) whiteBishops &= ~fromBit;
-        if (movingPiece == ROOK)   whiteRooks &= ~fromBit;
-        if (movingPiece == QUEEN)  whiteQueen &= ~fromBit;
-        if (movingPiece == KING)   whiteKing &= ~fromBit;
-    }
-    else
-    {
-        if (movingPiece == PAWN)   blackPawns &= ~fromBit;
-        if (movingPiece == KNIGHT) blackKnights &= ~fromBit;
-        if (movingPiece == BISHOP) blackBishops &= ~fromBit;
-        if (movingPiece == ROOK)   blackRooks &= ~fromBit;
-        if (movingPiece == QUEEN)  blackQueen &= ~fromBit;
-        if (movingPiece == KING)   blackKing &= ~fromBit;
-    }
+    removePiece(from, movingPiece, side == 0);
 
     // =========================
     // CAPTURE
@@ -233,24 +243,7 @@ void Board::makeMove(Move move)
 
     if (captured != -1)
     {
-        if (opponent == 0)
-        {
-            if (captured == PAWN)   whitePawns &= ~toBit;
-            if (captured == KNIGHT) whiteKnights &= ~toBit;
-            if (captured == BISHOP) whiteBishops &= ~toBit;
-            if (captured == ROOK)   whiteRooks &= ~toBit;
-            if (captured == QUEEN)  whiteQueen &= ~toBit;
-            if (captured == KING)   whiteKing &= ~toBit;
-        }
-        else
-        {
-            if (captured == PAWN)   blackPawns &= ~toBit;
-            if (captured == KNIGHT) blackKnights &= ~toBit;
-            if (captured == BISHOP) blackBishops &= ~toBit;
-            if (captured == ROOK)   blackRooks &= ~toBit;
-            if (captured == QUEEN)  blackQueen &= ~toBit;
-            if (captured == KING)   blackKing &= ~toBit;
-        }
+        removePiece(to, captured, opponent == 0);
     }
 
     // =========================
@@ -260,9 +253,7 @@ void Board::makeMove(Move move)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
         uint64_t capBit = 1ULL << capSq;
-
-        if (side == 0) blackPawns &= ~capBit;
-        else           whitePawns &= ~capBit;
+        removePiece(capSq, PAWN, opponent == 0);
     }
 
     // =========================
@@ -270,41 +261,14 @@ void Board::makeMove(Move move)
     // =========================
     if (type >= PROMOT_QUEEN)
     {
-        if (side == 0)
-        {
-            if (type == PROMOT_QUEEN)  whiteQueen |= toBit;
-            if (type == PROMOT_ROOK)   whiteRooks |= toBit;
-            if (type == PROMOT_BISHOP) whiteBishops |= toBit;
-            if (type == PROMOT_KNIGHT) whiteKnights |= toBit;
-        }
-        else
-        {
-            if (type == PROMOT_QUEEN)  blackQueen |= toBit;
-            if (type == PROMOT_ROOK)   blackRooks |= toBit;
-            if (type == PROMOT_BISHOP) blackBishops |= toBit;
-            if (type == PROMOT_KNIGHT) blackKnights |= toBit;
-        }
+        if (type == PROMOT_QUEEN)  addPiece(to, QUEEN, side == 0);
+        if (type == PROMOT_ROOK)   addPiece(to, ROOK, side == 0);
+        if (type == PROMOT_BISHOP) addPiece(to, BISHOP, side == 0);
+        if (type == PROMOT_KNIGHT) addPiece(to, KNIGHT, side == 0);
     }
     else
     {
-        if (side == 0)
-        {
-            if (movingPiece == PAWN)   whitePawns |= toBit;
-            if (movingPiece == KNIGHT) whiteKnights |= toBit;
-            if (movingPiece == BISHOP) whiteBishops |= toBit;
-            if (movingPiece == ROOK)   whiteRooks |= toBit;
-            if (movingPiece == QUEEN)  whiteQueen |= toBit;
-            if (movingPiece == KING)   whiteKing |= toBit;
-        }
-        else
-        {
-            if (movingPiece == PAWN)   blackPawns |= toBit;
-            if (movingPiece == KNIGHT) blackKnights |= toBit;
-            if (movingPiece == BISHOP) blackBishops |= toBit;
-            if (movingPiece == ROOK)   blackRooks |= toBit;
-            if (movingPiece == QUEEN)  blackQueen |= toBit;
-            if (movingPiece == KING)   blackKing |= toBit;
-        }
+        addPiece(to, movingPiece, side == 0);
     }
 
     // =========================

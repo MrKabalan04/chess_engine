@@ -40,6 +40,7 @@ public:
 
     int getPieceAt(int sq) const;
     void addPiece(int sq, int pieceType, bool isWhite);
+    void removePiece(int sq, int pieceType, bool isWhite);
 
     void makeMove(Move move);
 
