@@ -48,6 +48,7 @@ public:
     uint64_t rookAttacksOnTheFly(int sq, uint64_t occupied);
     uint64_t getRookAttacks(int sq, uint64_t occupied) const;
 
+    //Occupancy
     uint64_t setOccupancy(int index, uint64_t mask);
 
     //BISHOP
