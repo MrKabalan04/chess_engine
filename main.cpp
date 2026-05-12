@@ -1,5 +1,4 @@
 #include <iostream>
-#include <string>
 #include "board.h"
 #include "generateMoves.h"
 #include "types.h"
@@ -7,7 +6,7 @@
 using namespace std;
 
 // =========================
-// UI HELPERS
+// HELPERS
 // =========================
 string sq(int s) {
     string f = "abcdefgh";
@@ -15,41 +14,36 @@ string sq(int s) {
     return string(1, f[s % 8]) + r[s / 8];
 }
 
-string piece(int p) {
-    switch (p) {
-        case PAWN: return "P";
-        case KNIGHT: return "N";
-        case BISHOP: return "B";
-        case ROOK: return "R";
-        case QUEEN: return "Q";
-        case KING: return "K";
-        default: return ".";
-    }
-}
-
 void printBoard(const Board& b) {
-    cout << "\n    REALISTIC GAME POSITION\n\n";
-    cout << "    a  b  c  d  e  f  g  h\n";
+    cout << "\n    a  b  c  d  e  f  g  h\n";
     cout << "  --------------------------\n";
 
     for (int r = 7; r >= 0; r--) {
         cout << r + 1 << " | ";
-
         for (int f = 0; f < 8; f++) {
-            int sq = r * 8 + f;
-            int p = b.getPieceAt(sq);
-            cout << piece(p) << "  ";
-        }
+            int s = r * 8 + f;
+            int p = b.getPieceAt(s);
 
-        cout << "| " << r + 1 << "\n";
+            char c = '.';
+            switch (p) {
+                case PAWN: c = 'P'; break;
+                case KNIGHT: c = 'N'; break;
+                case BISHOP: c = 'B'; break;
+                case ROOK: c = 'R'; break;
+                case QUEEN: c = 'Q'; break;
+                case KING: c = 'K'; break;
+            }
+
+            cout << c << "  ";
+        }
+        cout << "|\n";
     }
 
-    cout << "  --------------------------\n";
-    cout << "    a  b  c  d  e  f  g  h\n\n";
+    cout << "    a  b  c  d  e  f  g  h\n";
 }
 
 // =========================
-// MAIN DEMO
+// MAIN
 // =========================
 int main() {
 
@@ -60,109 +54,106 @@ int main() {
     gen.init();
 
     // ======================================================
-    // REALISTIC MID-GAME POSITION (KING UNDER PRESSURE)
+    // PIECES SETUP
     // ======================================================
 
-    // WHITE PIECES
-    board.addPiece(4, KING, true);      // e1 king exposed
-    board.addPiece(27, QUEEN, true);    // d4 queen
-    board.addPiece(10, BISHOP, true);   // c2 bishop
-    board.addPiece(28, PAWN, true);     // e4 pawn
-    board.addPiece(35, KNIGHT, true);   // d5 knight
+    // WHITE ROOK on a1 (sq 0)
+    board.addPiece(0, ROOK, true);
 
-    // BLACK PIECES (AGGRESSIVE)
-    board.addPiece(60, KING, false);    // e8 king
-    board.addPiece(36, ROOK, false);    // e5 rook aiming at king file
-    board.addPiece(43, BISHOP, false);  // f6 bishop controlling diagonals
-    board.addPiece(52, QUEEN, false);   // e7 queen pressure
-    board.addPiece(12, KNIGHT, false);  // e3 knight jump threat
+    // BLACK BISHOP on h8 (sq 63)
+    board.addPiece(63, BISHOP, false);
 
-    board.sideToMove = 0;
+    // ======================================================
+    // BLOCKERS (IMPORTANT TEST)
+    // ======================================================
 
-    // =========================
+    // ROOK PATH
+    board.addPiece(3, PAWN, true);     // d1 (friendly blocker)
+    board.addPiece(24, KNIGHT, false); // a4 (enemy blocker)
+
+    // BISHOP PATH
+    board.addPiece(45, PAWN, true);    // f6 (friendly blocker)
+    board.addPiece(54, KNIGHT, false); // g7 (enemy blocker)
+
+    // ======================================================
     // PRINT BOARD
-    // =========================
+    // ======================================================
+
     cout << "\n=====================================\n";
-    cout << "      KING SAFETY DEMO POSITION      \n";
+    cout << "         SLIDING PIECE TEST          \n";
     cout << "=====================================\n";
 
     printBoard(board);
 
-    // =========================
-    // MOVE GENERATION
-    // =========================
+    // ======================================================
+    // OCCUPANCY & COLORS
+    // ======================================================
+
+    uint64_t occ = board.whitePieces | board.blackPieces;
+    uint64_t friendly = board.whitePieces;
+    uint64_t enemy = board.blackPieces;
+
     MoveList list;
-    gen.generateAllMoves(board, board.sideToMove, list);
 
-    cout << "Side to move: WHITE\n";
-    cout << "Generated pseudo-legal moves: " << list.count << "\n";
+    // ======================================================
+    // ROOK MOVES
+    // ======================================================
 
-    cout << "\nSample moves:\n";
-    for (int i = 0; i < min(list.count, 12); i++) {
+    cout << "\n=====================================\n";
+    cout << "          ROOK MOVES (a1)            \n";
+    cout << "=====================================\n";
+
+    gen.generateSlidingMoves(0, ROOK, occ, friendly, list);
+
+    cout << "Moves count: " << list.count << "\n";
+
+    for (int i = 0; i < list.count; i++) {
         cout << sq(list.moves[i].getFrom())
              << " -> "
              << sq(list.moves[i].getTo()) << "\n";
     }
 
-    // =========================
-    // KING SAFETY CHECK
-    // =========================
-    int whiteKing = __builtin_ctzll(board.whiteKing);
-    int blackKing = __builtin_ctzll(board.blackKing);
+    // ======================================================
+    // CLEAR LIST
+    // ======================================================
+    list.count = 0;
 
-    bool whiteCheck = gen.isSquareAttacked(whiteKing, 1, board);
-    bool blackCheck = gen.isSquareAttacked(blackKing, 0, board);
+    // ======================================================
+    // BISHOP MOVES
+    // ======================================================
 
     cout << "\n=====================================\n";
-    cout << "           KING STATUS               \n";
+    cout << "         BISHOP MOVES (h8)           \n";
     cout << "=====================================\n";
 
-    if (whiteCheck)
-        cout << "⚠ WHITE KING IS IN CHECK (UNDER ATTACK!) at " << sq(whiteKing) << "\n";
-    else
-        cout << "✔ White king safe\n";
+    gen.generateSlidingMoves(63, BISHOP, occ, friendly, list);
 
-    if (blackCheck)
-        cout << "⚠ BLACK KING IS IN CHECK (UNDER ATTACK!) at " << sq(blackKing) << "\n";
-    else
-        cout << "✔ Black king safe\n";
+    cout << "Moves count: " << list.count << "\n";
 
-    // =========================
-    // ATTACK MAP (WHITE VIEW)
-    // =========================
-    cout << "\n=====================================\n";
-    cout << "        WHITE ATTACK MAP             \n";
-    cout << "=====================================\n";
-
-    for (int r = 7; r >= 0; r--) {
-        cout << r + 1 << " | ";
-        for (int f = 0; f < 8; f++) {
-            int s = r * 8 + f;
-            cout << (gen.isSquareAttacked(s, 0, board) ? "x  " : ".  ");
-        }
-        cout << "|\n";
+    for (int i = 0; i < list.count; i++) {
+        cout << sq(list.moves[i].getFrom())
+             << " -> "
+             << sq(list.moves[i].getTo()) << "\n";
     }
 
-    cout << "    a  b  c  d  e  f  g  h\n";
+    // ======================================================
+    // CAPTURE TEST (EXPLICIT CHECK)
+    // ======================================================
 
-    // =========================
-    // FINAL STATUS
-    // =========================
     cout << "\n=====================================\n";
-    cout << "ENGINE STATUS: TACTICAL AWARENESS DEMO\n";
-    cout << "✔ Real position simulation\n";
-    cout << "✔ King attack detection working\n";
-    cout << "✔ Sliding + leaping pieces active\n";
-    cout << "NEXT STEP: LEGAL MOVE FILTERING\n";
+    cout << "         CAPTURE TESTS               \n";
     cout << "=====================================\n";
 
-    cout << PAWN;
-    cout << KNIGHT;
-    cout << BISHOP;
-    cout << ROOK;
-    cout << QUEEN;
-    cout << KING;
-    
+    int enemySquare = 54;   // g7
+    int friendlySquare = 45; // f6
+
+    uint64_t bishopAttacks = gen.bishopAttacksOnTheFly(63, occ);
+
+    cout << "Can bishop attack g7 (enemy)? ";
+    cout << ((bishopAttacks & (1ULL << enemySquare)) ? "YES\n" : "NO\n");
+
+    cout << "Can bishop attack f6 (friendly)? ";
+    cout << ((bishopAttacks & (1ULL << friendlySquare)) ? "YES\n" : "NO\n");
 
     return 0;
 }

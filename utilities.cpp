@@ -4,6 +4,21 @@
 #include <cstdint>
 using namespace std;
 
+uint64_t slideInDirection(int sq, uint64_t occ, int rowStep, int colStep){
+    int row = sq / 8;
+    int col = sq % 8;
+    uint64_t attacks = 0ULL;
+    while (row >= 0 && row <= 7 && col >= 0 && col <= 7){
+        row += rowStep;
+        col += colStep;
+        if (row < 0 || row > 7 || col < 0 || col > 7) break;
+        uint64_t bit = (1ULL << (row * 8 + col));
+        attacks |= bit;
+        if (bit & occ) break;
+    }
+    return attacks;
+}
+
 inline int getIndexOfLSB(uint64_t bitboard) {
     if (bitboard == 0) return -1; // احتياطاً
     return __builtin_ctzll(bitboard);
@@ -108,86 +123,22 @@ uint64_t GenerateMoves::bishopMask(int sq){
 
 //Rook Attacks
 uint64_t GenerateMoves::rookAttacksOnTheFly(int sq, uint64_t occ) {
-    uint64_t attacks = 0ULL;
-    int r = sq / 8, c = sq % 8;
-    for (int i = c + 1; i <= 7; i++) { 
-        uint64_t b = (1ULL << (r * 8 + i)); 
-        attacks |= b; 
-        if (b & occ) 
-        
-        break; 
-    }
-    for (int i = c - 1; i >= 0; i--) {
-        uint64_t b = (1ULL << (r * 8 + i)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    for (int i = r + 1; i <= 7; i++) { 
-        uint64_t b = (1ULL << (i * 8 + c)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    for (int i = r - 1; i >= 0; i--) { 
-        uint64_t b = (1ULL << (i * 8 + c)); 
-        attacks |= b; 
-        if (b & occ) 
-        break; 
-    }
-    return attacks;
+    return slideInDirection(sq, occ, 0, 1) | // Right
+           slideInDirection(sq, occ, 0, -1) | // Left
+           slideInDirection(sq, occ, 1, 0) | // Down
+           slideInDirection(sq, occ, -1, 0);  // Up
 }
 
 //Bishop Attacks
 uint64_t GenerateMoves::bishopAttacksOnTheFly(int sq, uint64_t occ){
-    uint64_t attacks = 0ULL;
-    int r = sq / 8;
-    int c = sq % 8;
-
-    int tr = r + 1;
-    int tc = c + 1;
-
-     while (tr <= 7 && tc <= 7) {
-        uint64_t b = (1ULL << (tr * 8 + tc));
-        attacks |= b;
-        if (b & occ) break;
-        tr++;
-        tc++;
-    }
-
-    tr = r + 1;
-    tc = c - 1;
-    while(tr <= 7 && tc >= 0){
-        uint64_t b = (1ULL << (tr * 8 + tc));
-        attacks |= b;
-        if (b & occ) break;
-        tr++;
-        tc--;
-    }   
-
-    tr = r - 1;
-    tc = c + 1;
-    while (tr >= 0 && tc <= 7){
-        uint64_t b = (1ULL << (tr * 8 + tc));
-        attacks |= b;
-        if (b & occ) break;
-        tr--;
-        tc++;
-    }
-
-    tr = r - 1;
-    tc = c - 1;
-    while (tr >= 0 && tc >= 0){
-        uint64_t b = (1ULL << (tr * 8 + tc));
-        attacks |= b;
-        if (b & occ) break;
-        tr--;
-        tc--;
-    }
-    
-    return attacks;
+    return slideInDirection(sq, occ, 1, 1) | // Down-Right
+           slideInDirection(sq, occ, 1, -1) | // Down-Left
+           slideInDirection(sq, occ, -1, 1) | // Up-Right
+           slideInDirection(sq, occ, -1, -1);  // Up-Left
 
 }
+
+
 
 //Print Bitboard (For Debugging)
 void GenerateMoves::printBitBoard(uint64_t bitboard) {
