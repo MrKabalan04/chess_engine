@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+// Define piece types
 enum PieceType : int {
     PAWN,
     KNIGHT,
@@ -12,6 +13,7 @@ enum PieceType : int {
     KING
 };
 
+//Move types for encoding moves
 enum MoveType : uint8_t {
     NORMAL = 0,
     DOUBLE_PUSH = 1,
@@ -23,6 +25,7 @@ enum MoveType : uint8_t {
     PROMOT_KNIGHT = 7
 };
 
+// Move structure to encode moves compactly
 struct Move {
     uint16_t data;
 
@@ -40,6 +43,7 @@ struct Move {
     int getType() const { return (data >> 12) & 0xF; }
 };
 
+// Move list to store generated moves
 struct MoveList {
     Move moves[256];
     int count = 0;

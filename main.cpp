@@ -34,6 +34,11 @@ void printBoard(const Board& b) {
                 case KING: c = 'K'; break;
             }
 
+            if (p == -1 && s == b.enPassantSquare)
+            {
+                c = '1';
+            }
+
             cout << c << "  ";
         }
         cout << "|\n";
@@ -46,114 +51,27 @@ void printBoard(const Board& b) {
 // MAIN
 // =========================
 int main() {
-
     Board board;
     board.clearBoard();
 
     GenerateMoves gen;
     gen.init();
 
-    // ======================================================
-    // PIECES SETUP
-    // ======================================================
+    // White pawn on e2, black pawn on d4 to test en passant
+    board.addPiece(12, PAWN, true);   // e2
+    board.addPiece(27, PAWN, false);  // d4
+    board.updateOccupancy();
 
-    // WHITE ROOK on a1 (sq 0)
-    board.addPiece(0, ROOK, true);
-
-    // BLACK BISHOP on h8 (sq 63)
-    board.addPiece(63, BISHOP, false);
-
-    // ======================================================
-    // BLOCKERS (IMPORTANT TEST)
-    // ======================================================
-
-    // ROOK PATH
-    board.addPiece(3, PAWN, true);     // d1 (friendly blocker)
-    board.addPiece(24, KNIGHT, false); // a4 (enemy blocker)
-
-    // BISHOP PATH
-    board.addPiece(45, PAWN, true);    // f6 (friendly blocker)
-    board.addPiece(54, KNIGHT, false); // g7 (enemy blocker)
-
-    // ======================================================
-    // PRINT BOARD
-    // ======================================================
-
-    cout << "\n=====================================\n";
-    cout << "         SLIDING PIECE TEST          \n";
-    cout << "=====================================\n";
-
+    cout << "Before double push:\n";
     printBoard(board);
 
-    // ======================================================
-    // OCCUPANCY & COLORS
-    // ======================================================
+    Move doublePush(12, 28, DOUBLE_PUSH);
+    board.makeMove(doublePush);
 
-    uint64_t occ = board.whitePieces | board.blackPieces;
-    uint64_t friendly = board.whitePieces;
-    uint64_t enemy = board.blackPieces;
+    cout << "After double push:\n";
+    printBoard(board);
 
-    MoveList list;
-
-    // ======================================================
-    // ROOK MOVES
-    // ======================================================
-
-    cout << "\n=====================================\n";
-    cout << "          ROOK MOVES (a1)            \n";
-    cout << "=====================================\n";
-
-    gen.generateSlidingMoves(0, ROOK, occ, friendly, list);
-
-    cout << "Moves count: " << list.count << "\n";
-
-    for (int i = 0; i < list.count; i++) {
-        cout << sq(list.moves[i].getFrom())
-             << " -> "
-             << sq(list.moves[i].getTo()) << "\n";
-    }
-
-    // ======================================================
-    // CLEAR LIST
-    // ======================================================
-    list.count = 0;
-
-    // ======================================================
-    // BISHOP MOVES
-    // ======================================================
-
-    cout << "\n=====================================\n";
-    cout << "         BISHOP MOVES (h8)           \n";
-    cout << "=====================================\n";
-
-    gen.generateSlidingMoves(63, BISHOP, occ, friendly, list);
-
-    cout << "Moves count: " << list.count << "\n";
-
-    for (int i = 0; i < list.count; i++) {
-        cout << sq(list.moves[i].getFrom())
-             << " -> "
-             << sq(list.moves[i].getTo()) << "\n";
-    }
-
-    // ======================================================
-    // CAPTURE TEST (EXPLICIT CHECK)
-    // ======================================================
-
-    cout << "\n=====================================\n";
-    cout << "         CAPTURE TESTS               \n";
-    cout << "=====================================\n";
-
-    int enemySquare = 54;   // g7
-    int friendlySquare = 45; // f6
-
-    uint64_t bishopAttacks = gen.bishopAttacksOnTheFly(63, occ);
-
-    cout << "Can bishop attack g7 (enemy)? ";
-    cout << ((bishopAttacks & (1ULL << enemySquare)) ? "YES\n" : "NO\n");
-
-    cout << "Can bishop attack f6 (friendly)? ";
-    cout << ((bishopAttacks & (1ULL << friendlySquare)) ? "YES\n" : "NO\n");
+    cout << "enPassantSquare: " << sq(board.enPassantSquare) << "\n";
 
     return 0;
 }

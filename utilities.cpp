@@ -4,6 +4,7 @@
 #include <cstdint>
 using namespace std;
 
+// Utility function to slide in a given direction until a blocker is hit
 uint64_t slideInDirection(int sq, uint64_t occ, int rowStep, int colStep){
     int row = sq / 8;
     int col = sq % 8;
@@ -20,10 +21,12 @@ uint64_t slideInDirection(int sq, uint64_t occ, int rowStep, int colStep){
 }
 
 inline int getIndexOfLSB(uint64_t bitboard) {
-    if (bitboard == 0) return -1; // احتياطاً
+    if (bitboard == 0) return -1; 
     return __builtin_ctzll(bitboard);
 }
 
+
+//**************************MAGIC TABLE INITIALIZATION*******************************//
 void GenerateMoves::initMagicTables() {
     memset(rookTable, 0, sizeof(rookTable));
 

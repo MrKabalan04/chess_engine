@@ -252,7 +252,6 @@ void Board::makeMove(Move move)
     if (type == EN_PASSANT)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
-        uint64_t capBit = 1ULL << capSq;
         removePiece(capSq, PAWN, opponent == 0);
     }
 
@@ -274,8 +273,13 @@ void Board::makeMove(Move move)
     // =========================
     // FINAL UPDATE
     // =========================
-    enPassantSquare = -1;
-    sideToMove ^= 1;
+    if (type == DOUBLE_PUSH){
+        enPassantSquare = (side == 0) ? to - 8 : to + 8;
+    }
+    else{
+        enPassantSquare = -1;
+    }
 
+    sideToMove ^= 1;
     updateOccupancy();
 }
