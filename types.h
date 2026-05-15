@@ -25,6 +25,12 @@ enum MoveType : uint8_t {
     PROMOT_KNIGHT = 7
 };
 
+
+    const uint8_t WHITE_CASTLING_KINGSIDE = 1;
+    const uint8_t WHITE_CASTLING_QUEENSIDE = 2;
+    const uint8_t BLACK_CASTLING_KINGSIDE = 4;
+    const uint8_t BLACK_CASTLING_QUEENSIDE = 8;
+
 // Move structure to encode moves compactly
 struct Move {
     uint16_t data;

@@ -87,34 +87,39 @@ void Board::addPiece(int sq, int pieceType, bool isWhite)
     occupied |= bit;
 }
 
-void Board::removePiece(int sq, int pieceType, bool isWhite){
+void Board::removePiece(int sq, int pieceType, bool isWhite)
+{
     uint64_t bit = (1ULL << sq);
+
     if (isWhite)
     {
         whitePieces &= ~bit;
+
         switch (pieceType)
         {
-            case PAWN: whitePawns &= ~bit; break;
+            case PAWN:   whitePawns &= ~bit; break;
             case KNIGHT: whiteKnights &= ~bit; break;
             case BISHOP: whiteBishops &= ~bit; break;
-            case ROOK: whiteRooks &= ~bit; break;
-            case QUEEN: whiteQueen &= ~bit; break;
-            case KING: whiteKing &= ~bit; break;
+            case ROOK:   whiteRooks &= ~bit; break;
+            case QUEEN:  whiteQueen &= ~bit; break;
+            case KING:   whiteKing &= ~bit; break;
         }
     }
     else
     {
         blackPieces &= ~bit;
+
         switch (pieceType)
         {
-            case PAWN: blackPawns &= ~bit; break;
+            case PAWN:   blackPawns &= ~bit; break;
             case KNIGHT: blackKnights &= ~bit; break;
             case BISHOP: blackBishops &= ~bit; break;
-            case ROOK: blackRooks &= ~bit; break;
-            case QUEEN: blackQueen &= ~bit; break;
-            case KING: blackKing &= ~bit; break;
+            case ROOK:   blackRooks &= ~bit; break;
+            case QUEEN:  blackQueen &= ~bit; break;
+            case KING:   blackKing &= ~bit; break;
         }
     }
+
     occupied &= ~bit;
 }
 
@@ -228,58 +233,133 @@ void Board::makeMove(Move move)
 
     int side = sideToMove;
     int opponent = side ^ 1;
+
     int movingPiece = getPieceAt(from);
     if (movingPiece == -1) return;
 
     // =========================
-    // REMOVE PIECE (SAFE)
+    // REMOVE PIECE FROM START
     // =========================
     removePiece(from, movingPiece, side == 0);
 
     // =========================
-    // CAPTURE
+    // CASTLING (SPECIAL CASE)
     // =========================
-    int captured = getPieceAt(to);
-
-    if (captured != -1)
+    if (type == CASTLE)
     {
-        removePiece(to, captured, opponent == 0);
-    }
+        // PLACE KING
+        addPiece(to, KING, side == 0);
 
-    // =========================
-    // EN PASSANT
-    // =========================
-    if (type == EN_PASSANT)
-    {
-        int capSq = (side == 0) ? (to - 8) : (to + 8);
-        removePiece(capSq, PAWN, opponent == 0);
-    }
-
-    // =========================
-    // PLACE PIECE
-    // =========================
-    if (type >= PROMOT_QUEEN)
-    {
-        if (type == PROMOT_QUEEN)  addPiece(to, QUEEN, side == 0);
-        if (type == PROMOT_ROOK)   addPiece(to, ROOK, side == 0);
-        if (type == PROMOT_BISHOP) addPiece(to, BISHOP, side == 0);
-        if (type == PROMOT_KNIGHT) addPiece(to, KNIGHT, side == 0);
+        // WHITE
+        if (side == 0)
+        {
+            if (from == 4 && to == 6)
+            {
+                removePiece(7, ROOK, true);
+                addPiece(5, ROOK, true);
+            }
+            else if (from == 4 && to == 2)
+            {
+                removePiece(0, ROOK, true);
+                addPiece(3, ROOK, true);
+            }
+        }
+        // BLACK
+        else
+        {
+            if (from == 60 && to == 62)
+            {
+                removePiece(63, ROOK, false);
+                addPiece(61, ROOK, false);
+            }
+            else if (from == 60 && to == 58)
+            {
+                removePiece(56, ROOK, false);
+                addPiece(59, ROOK, false);
+            }
+        }
     }
     else
     {
-        addPiece(to, movingPiece, side == 0);
+        // =========================
+        // CAPTURE
+        // =========================
+        int captured = getPieceAt(to);
+
+        if (captured != -1)
+        {
+            removePiece(to, captured, opponent == 0);
+
+            // rook capture → remove castling rights
+            if (captured == ROOK)
+            {
+                if (to == 0)  castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
+                if (to == 7)  castlingRights &= ~WHITE_CASTLING_KINGSIDE;
+                if (to == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
+                if (to == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
+            }
+        }
+
+        // =========================
+        // EN PASSANT
+        // =========================
+        if (type == EN_PASSANT)
+        {
+            int capSq = (side == 0) ? (to - 8) : (to + 8);
+            removePiece(capSq, PAWN, opponent == 0);
+        }
+
+        // =========================
+        // PROMOTION OR NORMAL MOVE
+        // =========================
+        if (type >= PROMOT_QUEEN)
+        {
+            if (type == PROMOT_QUEEN)  addPiece(to, QUEEN, side == 0);
+            if (type == PROMOT_ROOK)   addPiece(to, ROOK, side == 0);
+            if (type == PROMOT_BISHOP) addPiece(to, BISHOP, side == 0);
+            if (type == PROMOT_KNIGHT) addPiece(to, KNIGHT, side == 0);
+        }
+        else
+        {
+            addPiece(to, movingPiece, side == 0);
+        }
     }
 
     // =========================
-    // FINAL UPDATE
+    // CASTLING RIGHTS UPDATE
     // =========================
-    if (type == DOUBLE_PUSH){
-        enPassantSquare = (side == 0) ? to - 8 : to + 8;
+    if (movingPiece == KING)
+    {
+        if (side == 0)
+            castlingRights &= ~(WHITE_CASTLING_KINGSIDE | WHITE_CASTLING_QUEENSIDE);
+        else
+            castlingRights &= ~(BLACK_CASTLING_KINGSIDE | BLACK_CASTLING_QUEENSIDE);
     }
-    else{
+    else if (movingPiece == ROOK)
+    {
+        if (side == 0)
+        {
+            if (from == 0) castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
+            else if (from == 7) castlingRights &= ~WHITE_CASTLING_KINGSIDE;
+        }
+        else
+        {
+            if (from == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
+            else if (from == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
+        }
+    }
+
+    // =========================
+    // EN PASSANT SQUARE UPDATE
+    // =========================
+    if (type == DOUBLE_PUSH)
+        enPassantSquare = (side == 0) ? (to - 8) : (to + 8);
+    else
         enPassantSquare = -1;
-    }
 
+    // =========================
+    // FINALIZE TURN
+    // =========================
     sideToMove ^= 1;
     updateOccupancy();
 }

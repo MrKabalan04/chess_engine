@@ -183,49 +183,144 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     return false;
 }
 
-void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list) {
+void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list)
+{
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
     uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
     uint64_t occupied = board.occupied;
 
-    // Generate pawn moves
+    // =========================
+    // PAWNS
+    // =========================
     uint64_t pawns = (side == 0) ? board.whitePawns : board.blackPawns;
-    while (pawns) {
+
+    while (pawns)
+    {
         int sq = __builtin_ctzll(pawns);
         generatePawnMoves(sq, side, occupied, opponentPieces, list, board.enPassantSquare);
         pawns &= (pawns - 1);
     }
 
-    // Generate knight moves
+    // =========================
+    // KNIGHTS
+    // =========================
     uint64_t knights = (side == 0) ? board.whiteKnights : board.blackKnights;
-    while (knights) {
+
+    while (knights)
+    {
         int sq = __builtin_ctzll(knights);
         generateLeapingMoves(sq, KNIGHT, friendlyPieces, list);
         knights &= (knights - 1);
     }
 
-    // Generate bishop moves
+    // =========================
+    // BISHOPS
+    // =========================
     uint64_t bishops = (side == 0) ? board.whiteBishops : board.blackBishops;
-    while (bishops) {
+
+    while (bishops)
+    {
         int sq = __builtin_ctzll(bishops);
         generateSlidingMoves(sq, BISHOP, occupied, friendlyPieces, list);
         bishops &= (bishops - 1);
     }
 
-    // Generate rook moves
+    // =========================
+    // ROOKS
+    // =========================
     uint64_t rooks = (side == 0) ? board.whiteRooks : board.blackRooks;
-    while (rooks) {
+
+    while (rooks)
+    {
         int sq = __builtin_ctzll(rooks);
         generateSlidingMoves(sq, ROOK, occupied, friendlyPieces, list);
         rooks &= (rooks - 1);
     }
 
-    // Generate queen moves
+    // =========================
+    // QUEEN
+    // =========================
     uint64_t queens = (side == 0) ? board.whiteQueen : board.blackQueen;
-    while (queens) {
+
+    while (queens)
+    {
         int sq = __builtin_ctzll(queens);
         generateSlidingMoves(sq, QUEEN, occupied, friendlyPieces, list);
         queens &= (queens - 1);
     }
 
+    // =========================
+    // KING MOVES
+    // =========================
+    int kingSq = (side == 0)
+        ? __builtin_ctzll(board.whiteKing)
+        : __builtin_ctzll(board.blackKing);
+
+    generateLeapingMoves(kingSq, KING, friendlyPieces, list);
+
+    // =========================
+    // CASTLING (ONLY IF KING NOT IN CHECK)
+    // =========================
+    if (isSquareAttacked(kingSq, side ^ 1, board))
+        return;
+
+    // ======================================================
+    // WHITE CASTLING
+    // ======================================================
+    if (side == 0)
+    {
+        // KING SIDE (e1 -> g1)
+        if (board.castlingRights & WHITE_CASTLING_KINGSIDE)
+        {
+            if (!(occupied & ((1ULL << 5) | (1ULL << 6))) &&
+                !isSquareAttacked(4, 1, board) &&
+                !isSquareAttacked(5, 1, board) &&
+                !isSquareAttacked(6, 1, board))
+            {
+                list.addMove(Move(4, 6, CASTLE));
+            }
+        }
+
+        // QUEEN SIDE (e1 -> c1)
+        if (board.castlingRights & WHITE_CASTLING_QUEENSIDE)
+        {
+            if (!(occupied & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) &&
+                !isSquareAttacked(4, 1, board) &&
+                !isSquareAttacked(3, 1, board) &&
+                !isSquareAttacked(2, 1, board))
+            {
+                list.addMove(Move(4, 2, CASTLE));
+            }
+        }
     }
+
+    // ======================================================
+    // BLACK CASTLING
+    // ======================================================
+    else
+    {
+        // KING SIDE (e8 -> g8)
+        if (board.castlingRights & BLACK_CASTLING_KINGSIDE)
+        {
+            if (!(occupied & ((1ULL << 61) | (1ULL << 62))) &&
+                !isSquareAttacked(60, 0, board) &&
+                !isSquareAttacked(61, 0, board) &&
+                !isSquareAttacked(62, 0, board))
+            {
+                list.addMove(Move(60, 62, CASTLE));
+            }
+        }
+
+        // QUEEN SIDE (e8 -> c8)
+        if (board.castlingRights & BLACK_CASTLING_QUEENSIDE)
+        {
+            if (!(occupied & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))) &&
+                !isSquareAttacked(60, 0, board) &&
+                !isSquareAttacked(59, 0, board) &&
+                !isSquareAttacked(58, 0, board))
+            {
+                list.addMove(Move(60, 58, CASTLE));
+            }
+        }
+    }
+}

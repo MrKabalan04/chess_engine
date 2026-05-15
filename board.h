@@ -30,7 +30,7 @@ public:
     // ===== GAME STATE =====
     int sideToMove = 0; // 0 = white, 1 = black
     int enPassantSquare = -1;
-    int castlingRights = 0;
+    uint8_t castlingRights = 0;
 
     // ===== FUNCTIONS =====
     void init();

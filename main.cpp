@@ -8,39 +8,42 @@ using namespace std;
 // =========================
 // HELPERS
 // =========================
-string sq(int s) {
+string sq(int s)
+{
     string f = "abcdefgh";
     string r = "12345678";
     return string(1, f[s % 8]) + r[s / 8];
 }
 
-void printBoard(const Board& b) {
+void printBoard(const Board& b)
+{
     cout << "\n    a  b  c  d  e  f  g  h\n";
     cout << "  --------------------------\n";
 
-    for (int r = 7; r >= 0; r--) {
+    for (int r = 7; r >= 0; r--)
+    {
         cout << r + 1 << " | ";
-        for (int f = 0; f < 8; f++) {
+
+        for (int f = 0; f < 8; f++)
+        {
             int s = r * 8 + f;
             int p = b.getPieceAt(s);
 
             char c = '.';
-            switch (p) {
-                case PAWN: c = 'P'; break;
+
+            switch (p)
+            {
+                case PAWN:   c = 'P'; break;
                 case KNIGHT: c = 'N'; break;
                 case BISHOP: c = 'B'; break;
-                case ROOK: c = 'R'; break;
-                case QUEEN: c = 'Q'; break;
-                case KING: c = 'K'; break;
-            }
-
-            if (p == -1 && s == b.enPassantSquare)
-            {
-                c = '1';
+                case ROOK:   c = 'R'; break;
+                case QUEEN:  c = 'Q'; break;
+                case KING:   c = 'K'; break;
             }
 
             cout << c << "  ";
         }
+
         cout << "|\n";
     }
 
@@ -50,28 +53,54 @@ void printBoard(const Board& b) {
 // =========================
 // MAIN
 // =========================
-int main() {
+int main()
+{
     Board board;
     board.clearBoard();
 
     GenerateMoves gen;
     gen.init();
 
-    // White pawn on e2, black pawn on d4 to test en passant
-    board.addPiece(12, PAWN, true);   // e2
-    board.addPiece(27, PAWN, false);  // d4
+    // ======================================================
+    // SETUP: FULL CASTLING POSITION
+    // ======================================================
+
+    // White pieces
+    board.addPiece(4, KING, true);   // e1
+    board.addPiece(0, ROOK, true);   // a1
+    board.addPiece(7, ROOK, true);   // h1
+
+    // Black pieces
+    board.addPiece(60, KING, false); // e8
+    board.addPiece(56, ROOK, false); // a8
+    board.addPiece(63, ROOK, false); // h8
+
     board.updateOccupancy();
 
-    cout << "Before double push:\n";
+    cout << "Before castling:\n";
     printBoard(board);
 
-    Move doublePush(12, 28, DOUBLE_PUSH);
-    board.makeMove(doublePush);
+    // ======================================================
+    // WHITE KING SIDE CASTLE (e1 -> g1)
+    // ======================================================
+    Move whiteCastleKingside(4, 6, CASTLE);
+    board.makeMove(whiteCastleKingside);
 
-    cout << "After double push:\n";
+    cout << "\nAfter WHITE kingside castling:\n";
     printBoard(board);
 
-    cout << "enPassantSquare: " << sq(board.enPassantSquare) << "\n";
+    cout << "Side to move: " << board.sideToMove << "\n";
+
+    // ======================================================
+    // BLACK QUEEN SIDE CASTLE (e8 -> c8)
+    // ======================================================
+    Move blackCastleQueenside(60, 58, CASTLE);
+    board.makeMove(blackCastleQueenside);
+
+    cout << "\nAfter BLACK queenside castling:\n";
+    printBoard(board);
+
+    cout << "Side to move: " << board.sideToMove << "\n";
 
     return 0;
 }
