@@ -18,7 +18,7 @@ void Board::clearBoard()
 
     sideToMove = 0;
     enPassantSquare = -1;
-    castlingRights = 0;
+    
 }
 
 // =========================
@@ -128,7 +128,10 @@ void Board::removePiece(int sq, int pieceType, bool isWhite)
 // =========================
 void Board::init()
 {
+
     clearBoard();
+
+    
 
     for (int i = 0; i < 8; i++)
     {

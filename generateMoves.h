@@ -74,7 +74,7 @@ public:
     bool isSquareAttacked(int sq, int attackerColor, const Board& board);
 
     void generateAllMoves(const Board& board, int side, MoveList& list);
-
+    MoveList generateLegalMoves(const Board& board, int side );
 };
 
 #endif

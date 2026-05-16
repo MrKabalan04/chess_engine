@@ -150,37 +150,54 @@ void GenerateMoves::init() {
     initMagicTables();
 }
 
-bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& board) {
+bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& board)
+{
+    uint64_t pawns   = (attackerColor == 0) ? board.whitePawns   : board.blackPawns;
+    uint64_t knights = (attackerColor == 0) ? board.whiteKnights : board.blackKnights;
+    uint64_t bishops = (attackerColor == 0) ? board.whiteBishops : board.blackBishops;
+    uint64_t rooks   = (attackerColor == 0) ? board.whiteRooks   : board.blackRooks;
+    uint64_t queens  = (attackerColor == 0) ? board.whiteQueen   : board.blackQueen;
+    uint64_t king    = (attackerColor == 0) ? board.whiteKing    : board.blackKing;
 
-    uint64_t enemyPawns, enemyKnights, enemyKing, enemyBishops, enemyRooks, enemyQueens;
+    if (knightMasks[sq] & knights) return true;
+    if (kingMasks[sq] & king) return true;
 
-    if (attackerColor == 0) { // WHITE
-        enemyPawns = board.whitePawns;
-        enemyKnights = board.whiteKnights;
-        enemyKing = board.whiteKing;
-        enemyBishops = board.whiteBishops;
-        enemyRooks = board.whiteRooks;
-        enemyQueens = board.whiteQueen;
-    } else { // BLACK
-        enemyPawns = board.blackPawns;
-        enemyKnights = board.blackKnights;
-        enemyKing = board.blackKing;
-        enemyBishops = board.blackBishops;
-        enemyRooks = board.blackRooks;
-        enemyQueens = board.blackQueen;
-    }
+    // IMPORTANT: pawn attacks MUST be precomputed as "attacks TO sq"
+    if (pawnMasks[attackerColor][sq] & pawns) return true;
 
-    if (knightMasks[sq] & enemyKnights) return true;
-
-    if (kingMasks[sq] & enemyKing) return true;
-
-    if (pawnMasks[attackerColor][sq] & enemyPawns) return true;
-
-    if (getBishopAttacks(sq, board.occupied) & (enemyBishops | enemyQueens)) return true;
-
-    if (getRookAttacks(sq, board.occupied) & (enemyRooks | enemyQueens)) return true;
+    if (getBishopAttacks(sq, board.occupied) & (bishops | queens)) return true;
+    if (getRookAttacks(sq, board.occupied) & (rooks | queens)) return true;
 
     return false;
+}
+
+MoveList GenerateMoves::generateLegalMoves(const Board& board, int side)
+{
+    MoveList pseudoLegalMoves;
+    generateAllMoves(board, side, pseudoLegalMoves);
+
+    MoveList legalMoves;
+
+    int opponent = side ^ 1;
+
+    for (int i = 0; i < pseudoLegalMoves.count; i++)
+    {
+        Move move = pseudoLegalMoves.moves[i];
+
+        Board copy = board;   // IMPORTANT: fresh copy per move
+        copy.makeMove(move);
+
+        int kingSq = (side == 0)
+            ? __builtin_ctzll(copy.whiteKing)
+            : __builtin_ctzll(copy.blackKing);
+
+        if (!isSquareAttacked(kingSq, opponent, copy))
+        {
+            legalMoves.addMove(move);
+        }
+    }
+
+    return legalMoves;
 }
 
 void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list)
@@ -188,6 +205,7 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
     uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
     uint64_t occupied = board.occupied;
+    int enemy = side ^ 1;
 
     // =========================
     // PAWNS
@@ -250,18 +268,20 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     }
 
     // =========================
-    // KING MOVES
+    // KING MOVES (LEGAL ONLY)
     // =========================
     int kingSq = (side == 0)
         ? __builtin_ctzll(board.whiteKing)
         : __builtin_ctzll(board.blackKing);
 
-    generateLeapingMoves(kingSq, KING, friendlyPieces, list);
+    generateKingMoves(kingSq, side, board, list);
 
     // =========================
-    // CASTLING (ONLY IF KING NOT IN CHECK)
+    // CASTLING
     // =========================
-    if (isSquareAttacked(kingSq, side ^ 1, board))
+
+    // If king is in check → NO CASTLING
+    if (isSquareAttacked(kingSq, enemy, board))
         return;
 
     // ======================================================
@@ -273,9 +293,9 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
         if (board.castlingRights & WHITE_CASTLING_KINGSIDE)
         {
             if (!(occupied & ((1ULL << 5) | (1ULL << 6))) &&
-                !isSquareAttacked(4, 1, board) &&
-                !isSquareAttacked(5, 1, board) &&
-                !isSquareAttacked(6, 1, board))
+                !isSquareAttacked(4, enemy, board) &&
+                !isSquareAttacked(5, enemy, board) &&
+                !isSquareAttacked(6, enemy, board))
             {
                 list.addMove(Move(4, 6, CASTLE));
             }
@@ -285,9 +305,9 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
         if (board.castlingRights & WHITE_CASTLING_QUEENSIDE)
         {
             if (!(occupied & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) &&
-                !isSquareAttacked(4, 1, board) &&
-                !isSquareAttacked(3, 1, board) &&
-                !isSquareAttacked(2, 1, board))
+                !isSquareAttacked(4, enemy, board) &&
+                !isSquareAttacked(3, enemy, board) &&
+                !isSquareAttacked(2, enemy, board))
             {
                 list.addMove(Move(4, 2, CASTLE));
             }
@@ -303,9 +323,9 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
         if (board.castlingRights & BLACK_CASTLING_KINGSIDE)
         {
             if (!(occupied & ((1ULL << 61) | (1ULL << 62))) &&
-                !isSquareAttacked(60, 0, board) &&
-                !isSquareAttacked(61, 0, board) &&
-                !isSquareAttacked(62, 0, board))
+                !isSquareAttacked(60, enemy, board) &&
+                !isSquareAttacked(61, enemy, board) &&
+                !isSquareAttacked(62, enemy, board))
             {
                 list.addMove(Move(60, 62, CASTLE));
             }
@@ -315,9 +335,9 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
         if (board.castlingRights & BLACK_CASTLING_QUEENSIDE)
         {
             if (!(occupied & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))) &&
-                !isSquareAttacked(60, 0, board) &&
-                !isSquareAttacked(59, 0, board) &&
-                !isSquareAttacked(58, 0, board))
+                !isSquareAttacked(60, enemy, board) &&
+                !isSquareAttacked(59, enemy, board) &&
+                !isSquareAttacked(58, enemy, board))
             {
                 list.addMove(Move(60, 58, CASTLE));
             }

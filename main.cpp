@@ -8,11 +8,29 @@ using namespace std;
 // =========================
 // HELPERS
 // =========================
+
 string sq(int s)
 {
     string f = "abcdefgh";
     string r = "12345678";
     return string(1, f[s % 8]) + r[s / 8];
+}
+
+void printMoves(const MoveList& list)
+{
+    cout << "\nGenerated Moves:\n";
+
+    for (int i = 0; i < list.count; i++)
+    {
+        Move m = list.moves[i];
+
+        cout << sq(m.getFrom()) << " -> " << sq(m.getTo());
+
+        if (m.getType() == CASTLE)
+            cout << " (CASTLE)";
+
+        cout << endl;
+    }
 }
 
 void printBoard(const Board& b)
@@ -47,60 +65,78 @@ void printBoard(const Board& b)
         cout << "|\n";
     }
 
+    cout << "  --------------------------\n";
     cout << "    a  b  c  d  e  f  g  h\n";
+}
+
+void printCastlingRights(uint8_t rights)
+{
+    cout << "\nCASTLING RIGHTS:\n";
+
+    if (rights & WHITE_CASTLING_KINGSIDE)
+        cout << "White Kingside\n";
+
+    if (rights & WHITE_CASTLING_QUEENSIDE)
+        cout << "White Queenside\n";
+
+    if (rights & BLACK_CASTLING_KINGSIDE)
+        cout << "Black Kingside\n";
+
+    if (rights & BLACK_CASTLING_QUEENSIDE)
+        cout << "Black Queenside\n";
+
+    if (rights == 0)
+        cout << "None\n";
 }
 
 // =========================
 // MAIN
 // =========================
+
 int main()
 {
-    Board board;
-    board.clearBoard();
-
     GenerateMoves gen;
     gen.init();
 
-    // ======================================================
-    // SETUP: FULL CASTLING POSITION
-    // ======================================================
+    MoveList list;
+    Board board;
+   cout << "\n========== TEST 5 (PINNED PIECE TEST) ==========\n";
 
-    // White pieces
-    board.addPiece(4, KING, true);   // e1
-    board.addPiece(0, ROOK, true);   // a1
-    board.addPiece(7, ROOK, true);   // h1
+board.clearBoard();
+board.sideToMove = 0;
 
-    // Black pieces
-    board.addPiece(60, KING, false); // e8
-    board.addPiece(56, ROOK, false); // a8
-    board.addPiece(63, ROOK, false); // h8
+// castling irrelevant here
+board.castlingRights = 0;
 
-    board.updateOccupancy();
+// WHITE pieces
+board.addPiece(4, KING, true);     // e1
+board.addPiece(28, ROOK, true);    // e4 (PINNED)
 
-    cout << "Before castling:\n";
-    printBoard(board);
+// BLACK piece (pin attacker)
+board.addPiece(60, ROOK, false);   // e8
+board.addPiece(63, KING, false);   // e7 (blocking the pin)
 
-    // ======================================================
-    // WHITE KING SIDE CASTLE (e1 -> g1)
-    // ======================================================
-    Move whiteCastleKingside(4, 6, CASTLE);
-    board.makeMove(whiteCastleKingside);
+board.updateOccupancy();
 
-    cout << "\nAfter WHITE kingside castling:\n";
-    printBoard(board);
+printBoard(board);
 
-    cout << "Side to move: " << board.sideToMove << "\n";
+// generate legal moves ONLY for white
+MoveList legal = gen.generateLegalMoves(board, 0);
 
-    // ======================================================
-    // BLACK QUEEN SIDE CASTLE (e8 -> c8)
-    // ======================================================
-    Move blackCastleQueenside(60, 58, CASTLE);
-    board.makeMove(blackCastleQueenside);
+printMoves(legal);
 
-    cout << "\nAfter BLACK queenside castling:\n";
-    printBoard(board);
+// 🔥 check if rook on e4 has moves
+bool rookHasMoves = false;
 
-    cout << "Side to move: " << board.sideToMove << "\n";
+for (int i = 0; i < legal.count; i++)
+{
+    Move m = legal.moves[i];
+    if (m.getFrom() == 28)
+        rookHasMoves = true;
+}
+
+cout << "\nPinned rook (e4) has legal moves? "
+     << rookHasMoves << endl;
 
     return 0;
 }
