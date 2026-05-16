@@ -35,38 +35,41 @@ void printMoves(const MoveList& list)
 
 void printBoard(const Board& b)
 {
-    cout << "\n    a  b  c  d  e  f  g  h\n";
-    cout << "  --------------------------\n";
+    cout << "\n";
 
     for (int r = 7; r >= 0; r--)
     {
-        cout << r + 1 << " | ";
+        cout << r + 1 << "  ";
 
         for (int f = 0; f < 8; f++)
         {
             int s = r * 8 + f;
-            int p = b.getPieceAt(s);
 
             char c = '.';
 
-            switch (p)
-            {
-                case PAWN:   c = 'P'; break;
-                case KNIGHT: c = 'N'; break;
-                case BISHOP: c = 'B'; break;
-                case ROOK:   c = 'R'; break;
-                case QUEEN:  c = 'Q'; break;
-                case KING:   c = 'K'; break;
-            }
+            // WHITE
+            if (b.whitePawns & (1ULL << s)) c = 'P';
+            else if (b.whiteKnights & (1ULL << s)) c = 'N';
+            else if (b.whiteBishops & (1ULL << s)) c = 'B';
+            else if (b.whiteRooks & (1ULL << s)) c = 'R';
+            else if (b.whiteQueen & (1ULL << s)) c = 'Q';
+            else if (b.whiteKing & (1ULL << s)) c = 'K';
 
-            cout << c << "  ";
+            // BLACK
+            else if (b.blackPawns & (1ULL << s)) c = 'p';
+            else if (b.blackKnights & (1ULL << s)) c = 'n';
+            else if (b.blackBishops & (1ULL << s)) c = 'b';
+            else if (b.blackRooks & (1ULL << s)) c = 'r';
+            else if (b.blackQueen & (1ULL << s)) c = 'q';
+            else if (b.blackKing & (1ULL << s)) c = 'k';
+
+            cout << c << " ";
         }
 
-        cout << "|\n";
+        cout << endl;
     }
 
-    cout << "  --------------------------\n";
-    cout << "    a  b  c  d  e  f  g  h\n";
+    cout << "\n   a b c d e f g h\n\n";
 }
 
 void printCastlingRights(uint8_t rights)
@@ -89,6 +92,14 @@ void printCastlingRights(uint8_t rights)
         cout << "None\n";
 }
 
+
+int parseSquare(char file, char rank)
+{
+    int col = file - 'a';   // a-h → 0-7
+    int row = rank - '1';   // 1-8 → 0-7
+
+    return row * 8 + col;
+}
 // =========================
 // MAIN
 // =========================
@@ -98,45 +109,70 @@ int main()
     GenerateMoves gen;
     gen.init();
 
-    MoveList list;
     Board board;
-   cout << "\n========== TEST 5 (PINNED PIECE TEST) ==========\n";
+    board.init();
 
-board.clearBoard();
-board.sideToMove = 0;
+    while (true)
+    {
+        printBoard(board);
 
-// castling irrelevant here
-board.castlingRights = 0;
+        if (gen.isCheckmate(board, board.sideToMove))
+        {
+            cout << "Checkmate! "
+                 << ((board.sideToMove == 0) ? "Black" : "White")
+                 << " wins!" << endl;
+            break;
+        }
 
-// WHITE pieces
-board.addPiece(4, KING, true);     // e1
-board.addPiece(28, ROOK, true);    // e4 (PINNED)
+        if (gen.isStalemate(board, board.sideToMove))
+        {
+            cout << "Stalemate! It's a draw!" << endl;
+            break;
+        }
 
-// BLACK piece (pin attacker)
-board.addPiece(60, ROOK, false);   // e8
-board.addPiece(63, KING, false);   // e7 (blocking the pin)
+        MoveList legal = gen.generateLegalMoves(board, board.sideToMove);
 
-board.updateOccupancy();
+        cout << ((board.sideToMove == 0) ? "White" : "Black")
+             << " to move. Enter your move (e2e4): ";
 
-printBoard(board);
+        string moveStr;
+        cin >> moveStr;
 
-// generate legal moves ONLY for white
-MoveList legal = gen.generateLegalMoves(board, 0);
+        if (moveStr.length() != 4)
+        {
+            cout << "Invalid move format!" << endl;
+            continue;
+        }
 
-printMoves(legal);
+        int from = parseSquare(moveStr[0], moveStr[1]);
+        int to   = parseSquare(moveStr[2], moveStr[3]);
 
-// 🔥 check if rook on e4 has moves
-bool rookHasMoves = false;
+        if (from < 0 || from > 63 || to < 0 || to > 63)
+        {
+            cout << "Invalid square input!" << endl;
+            continue;
+        }
 
-for (int i = 0; i < legal.count; i++)
-{
-    Move m = legal.moves[i];
-    if (m.getFrom() == 28)
-        rookHasMoves = true;
-}
+        bool found = false;
 
-cout << "\nPinned rook (e4) has legal moves? "
-     << rookHasMoves << endl;
+        for (int i = 0; i < legal.count; i++)
+        {
+            Move m = legal.moves[i];
+
+            if (m.getFrom() == from && m.getTo() == to)
+            {
+                board.makeMove(m);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            cout << "Illegal move! Try again." << endl;
+            continue;
+        }
+    }
 
     return 0;
 }

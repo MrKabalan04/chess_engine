@@ -75,6 +75,9 @@ public:
 
     void generateAllMoves(const Board& board, int side, MoveList& list);
     MoveList generateLegalMoves(const Board& board, int side );
+    bool isInCheck(const Board& board, int side);
+    bool isCheckmate(const Board& board, int side);
+    bool isStalemate(const Board& board, int side);
 };
 
 #endif

@@ -200,6 +200,30 @@ MoveList GenerateMoves::generateLegalMoves(const Board& board, int side)
     return legalMoves;
 }
 
+bool GenerateMoves::isInCheck(const Board& board, int side){
+    int kingSq = (side == 0)
+        ? __builtin_ctzll(board.whiteKing)
+        : __builtin_ctzll(board.blackKing);
+    int opponent = side ^ 1;
+    return isSquareAttacked(kingSq, opponent, board);
+}
+
+bool GenerateMoves::isCheckmate(const Board& board, int side){
+    if (!isInCheck(board, side)){
+        return false;
+    }
+    MoveList legalMoves = generateLegalMoves(board, side);
+    return legalMoves.count == 0;
+}
+
+bool GenerateMoves::isStalemate(const Board& board, int side){
+    if (isInCheck(board, side)){
+        return false;
+    }
+    MoveList legalMoves = generateLegalMoves(board, side);
+    return legalMoves.count == 0;
+}
+
 void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list)
 {
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
