@@ -27,6 +27,9 @@ public:
     uint64_t blackPieces = 0ULL;
     uint64_t occupied = 0ULL;
 
+    
+
+
     // ===== GAME STATE =====
     int sideToMove = 0; // 0 = white, 1 = black
     int enPassantSquare = -1;
@@ -38,6 +41,7 @@ public:
     void clearBoard();
     void updateOccupancy();
 
+    int evaluate();
     int getPieceAt(int sq) const;
     void addPiece(int sq, int pieceType, bool isWhite);
     void removePiece(int sq, int pieceType, bool isWhite);

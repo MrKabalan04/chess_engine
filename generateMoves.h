@@ -78,6 +78,8 @@ public:
     bool isInCheck(const Board& board, int side);
     bool isCheckmate(const Board& board, int side);
     bool isStalemate(const Board& board, int side);
+    int minimax(Board& board, int depth, bool isMaximizing);
+    Move getBestMove(Board& board, int depth);
 };
 
 #endif

@@ -366,3 +366,133 @@ void Board::makeMove(Move move)
     sideToMove ^= 1;
     updateOccupancy();
 }
+
+// =========================
+// EVALUATION
+// =========================
+
+// ===== PIECES TABLE =====
+    static const int pawnTable[64] = {
+            0,  0,  0,  0,  0,  0,  0,  0,
+            50, 50, 50, 50, 50, 50, 50, 50,
+            10, 10, 20, 30, 30, 20, 10, 10,
+            5,  5, 10, 25, 25, 10,  5,  5,
+            0,  0,  0, 20, 20,  0,  0,  0,
+            5, -5,-10,  0,  0,-10, -5,  5,
+            5, 10, 10,-20,-20, 10, 10,  5,
+            0,  0,  0,  0,  0,  0,  0,  0
+        };         
+
+    static const int knightTable[64] = {
+            -50,-40,-30,-30,-30,-30,-40,-50,
+            -40,-20,  0,  0,  0,  0,-20,-40,
+            -30,  0, 10, 15, 15, 10,  0,-30,
+            -30,  5, 15, 20, 20, 15,  5,-30,
+            -30,  0, 15, 20, 20, 15,  0,-30,
+            -30,  5, 10, 15, 15, 10,  5,-30,
+            -40,-20,  0,  5,  5,  0,-20,-40,
+            -50,-40,-30,-30,-30,-30,-40,-50,
+        };
+
+    static const int bishopTable[64] = {
+            -20,-10,-10,-10,-10,-10,-10,-20,
+            -10,  0,  0,  0,  0,  0,  0,-10,
+            -10,  0,  5, 10, 10,  5,  0,-10,
+            -10,  5,  5, 10, 10,  5,  5,-10,
+            -10,  0, 10, 10, 10, 10,  0,-10,
+            -10, 10, 10, 10, 10, 10, 10,-10,
+            -10,  5,  0,  0,  0,  0,  5,-10,
+            -20,-10,-10,-10,-10,-10,-10,-20,
+        };
+
+    static const int rookTable[64] = {
+        0,  0,  0,  0,  0,  0,  0,  0,
+        5, 10, 10, 10, 10, 10, 10,  5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        -5,  0,  0,  0,  0,  0,  0, -5,
+        0,  0,  0,  5,  5,  0,  0,  0
+    };
+
+    static const int queenTable[64] = {
+        -20,-10,-10, -5, -5,-10,-10,-20,
+        -10,  0,  0,  0,  0,  0,  0,-10,
+        -10,  0,  5,  5,  5,  5,  0,-10,
+        -5,  0,  5,  5,  5,  5,  0, -5,
+        0,  0,  5,  5,  5,  5,  0, -5,
+        -10,  5,  5,  5,  5,  5,  0,-10,
+        -10,  0,  5,  0,  0,  0,  0,-10,
+        -20,-10,-10, -5, -5,-10,-10,-20
+    };
+
+    static const int kingTable[64] = {
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -30,-40,-40,-50,-50,-40,-40,-30,
+    -20,-30,-30,-40,-40,-30,-30,-20,
+    -10,-20,-20,-20,-20,-20,-20,-10,
+    20, 20,  0,  0,  0,  0, 20, 20,
+    20, 30, 10,  0,  0, 10, 30, 20
+    };
+
+    static const int kingEndgameTable[64] = {
+        -50,-40,-30,-20,-20,-30,-40,-50,
+        -30,-20,-10,  0,  0,-10,-20,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 30, 40, 40, 30,-10,-30,
+        -30,-10, 20, 30, 30, 20,-10,-30,
+        -30,-30,  0,  0,  0,  0,-30,-30,
+        -50,-30,-30,-30,-30,-30,-30,-50
+    };  
+
+
+int Board::evaluate()
+{
+    int score = 0;
+    uint64_t bb;
+
+    // WHITE (flip with ^ 56)
+    bb = whitePawns;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 100 + pawnTable[sq ^ 56]; bb &= bb - 1; }
+
+    bb = whiteKnights;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 320 + knightTable[sq ^ 56]; bb &= bb - 1; }
+
+    bb = whiteBishops;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 330 + bishopTable[sq ^ 56]; bb &= bb - 1; }
+
+    bb = whiteRooks;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 500 + rookTable[sq ^ 56]; bb &= bb - 1; }
+
+    bb = whiteQueen;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 900 + queenTable[sq ^ 56]; bb &= bb - 1; }
+
+    bb = whiteKing;
+    while (bb) { int sq = __builtin_ctzll(bb); score += 10000 + kingTable[sq ^ 56]; bb &= bb - 1; }
+
+    // BLACK (use sq directly)
+    bb = blackPawns;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 100 + pawnTable[sq]; bb &= bb - 1; }
+
+    bb = blackKnights;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 320 + knightTable[sq]; bb &= bb - 1; }
+
+    bb = blackBishops;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 330 + bishopTable[sq]; bb &= bb - 1; }
+
+    bb = blackRooks;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 500 + rookTable[sq]; bb &= bb - 1; }
+
+    bb = blackQueen;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 900 + queenTable[sq]; bb &= bb - 1; }
+
+    bb = blackKing;
+    while (bb) { int sq = __builtin_ctzll(bb); score -= 10000 + kingTable[sq]; bb &= bb - 1; }
+
+    return score;
+}
+

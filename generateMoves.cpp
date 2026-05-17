@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstring>
 #include <cstdint>
+#include <climits>
 #include "types.h"
 using namespace std;
 
@@ -163,7 +164,7 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     if (kingMasks[sq] & king) return true;
 
     // IMPORTANT: pawn attacks MUST be precomputed as "attacks TO sq"
-    if (pawnMasks[attackerColor][sq] & pawns) return true;
+    if (pawnMasks[attackerColor ^ 1][sq] & pawns) return true;
 
     if (getBishopAttacks(sq, board.occupied) & (bishops | queens)) return true;
     if (getRookAttacks(sq, board.occupied) & (rooks | queens)) return true;
@@ -367,4 +368,50 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
             }
         }
     }
+}
+
+int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing){
+    if (depth == 0) {
+        return board.evaluate();
+    }
+    int bestScore = isMaximizing ? INT_MIN : INT_MAX;
+    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
+    for (int i = 0; i < legalMoves.count; i++) {
+        Move move = legalMoves.moves[i];
+        Board copy = board;
+        copy.makeMove(move);
+        int score = minimax(copy, depth - 1, !isMaximizing);
+        if (isMaximizing) {
+            bestScore = max(score, bestScore);
+        } else {
+            bestScore = min(score, bestScore);
+        }
+    }
+    return bestScore;
+}
+
+Move GenerateMoves::getBestMove(Board& board, int depth)
+{
+    Move bestMove;
+    bool isWhite = board.sideToMove == 0;
+    int bestScore = isWhite ? INT_MIN : INT_MAX;
+
+    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
+
+    for (int i = 0; i < legalMoves.count; i++)
+    {
+        Move move = legalMoves.moves[i];
+        Board copy = board;
+        copy.makeMove(move);
+
+        int score = minimax(copy, depth - 1, copy.sideToMove == 0);
+
+        if (isWhite ? score > bestScore : score < bestScore)
+        {
+            bestScore = score;
+            bestMove = move;
+        }
+    }
+
+    return bestMove;
 }
