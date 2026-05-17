@@ -112,97 +112,114 @@ int main()
     Board board;
     board.init();
 
-    
-
     while (true)
-{
-    printBoard(board);
-
-    if (gen.isCheckmate(board, board.sideToMove))
     {
-        cout << "Checkmate! "
-             << ((board.sideToMove == 0) ? "Black" : "White")
-             << " wins!" << endl;
-        break;
-    }
+        printBoard(board);
 
-    if (gen.isStalemate(board, board.sideToMove))
-    {
-        cout << "Stalemate! It's a draw!" << endl;
-        break;
-    }
-
-    // =====================================
-    // HUMAN (WHITE)
-    // =====================================
-
-    if (board.sideToMove == 0)
-    {
-        MoveList legal =
-            gen.generateLegalMoves(board, board.sideToMove);
-
-        cout << "White to move (e2e4): ";
-
-        string moveStr;
-        cin >> moveStr;
-
-        if (moveStr.length() != 4)
+        // =========================
+        // Generate legal moves FIRST
+        // =========================
+        MoveList legal = gen.generateLegalMoves(board, board.sideToMove);
+        if (board.isThreefoldRepetition())
         {
-            cout << "Invalid move format!" << endl;
-            continue;
+            cout << "Threefold repetition! It's a draw!\n";
+            break;
         }
-
-        int from = parseSquare(moveStr[0], moveStr[1]);
-        int to   = parseSquare(moveStr[2], moveStr[3]);
-
-        if (from < 0 || from > 63 ||
-            to < 0 || to > 63)
+        // =========================
+        // Game over check (correct way)
+        // =========================
+        if (legal.count == 0)
         {
-            cout << "Invalid square input!" << endl;
-            continue;
-        }
-
-        bool found = false;
-
-        for (int i = 0; i < legal.count; i++)
-        {
-            Move m = legal.moves[i];
-
-            if (m.getFrom() == from &&
-                m.getTo() == to)
+            if (gen.isCheckmate(board, board.sideToMove))
             {
-                board.makeMove(m);
-                found = true;
-                break;
+                cout << "Checkmate! "
+                     << (board.sideToMove == 0 ? "Black" : "White")
+                     << " wins!\n";
+            }
+            else
+            {
+                cout << "Stalemate! It's a draw!\n";
+            }
+            break;
+        }
+
+        // =========================
+        // WHITE (HUMAN)
+        // =========================
+        if (board.sideToMove == 0)
+        {
+            cout << "White to move (e2e4): ";
+
+            string moveStr;
+            cin >> moveStr;
+
+            if (moveStr.length() != 4)
+            {
+                cout << "Invalid format!\n";
+                continue;
+            }
+
+            int from = parseSquare(moveStr[0], moveStr[1]);
+            int to   = parseSquare(moveStr[2], moveStr[3]);
+
+            bool found = false;
+
+            for (int i = 0; i < legal.count; i++)
+            {
+                Move m = legal.moves[i];
+
+                if (m.getFrom() == from && m.getTo() == to)
+                {
+                    board.makeMove(m);
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                cout << "Illegal move!\n";
+                continue;
             }
         }
 
-        if (!found)
+        // =========================
+        // BLACK (ENGINE)
+        // =========================
+        else
         {
-            cout << "Illegal move!" << endl;
-            continue;
+            cout << "Engine thinking...\n";
+
+            Move bestMove = gen.getBestMove(board, 4);
+
+            // =========================
+            // SAFETY CHECK (VERY IMPORTANT)
+            // =========================
+            bool valid = false;
+
+            for (int i = 0; i < legal.count; i++)
+            {
+                if (legal.moves[i].getFrom() == bestMove.getFrom() &&
+                    legal.moves[i].getTo()   == bestMove.getTo())
+                {
+                    valid = true;
+                    break;
+                }
+            }
+
+            if (!valid)
+            {
+                cout << "Engine returned illegal move. Stopping.\n";
+                break;
+            }
+
+            cout << "Engine played: "
+                 << sq(bestMove.getFrom())
+                 << sq(bestMove.getTo()) << endl;
+
+            board.makeMove(bestMove);
         }
     }
-
-    // =====================================
-    // ENGINE (BLACK)
-    // =====================================
-
-    else
-    {
-        cout << "Engine thinking...\n";
-        cout << "Eval: " << board.evaluate() << endl;
-        Move bestMove = gen.getBestMove(board, 3);
-
-        cout << "Engine played: "
-             << sq(bestMove.getFrom())
-             << sq(bestMove.getTo())
-             << endl;
-
-        board.makeMove(bestMove);
-        cout << "Eval: " << board.evaluate() << endl;
-    }
-}
 
     return 0;
 }

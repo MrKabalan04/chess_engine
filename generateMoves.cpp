@@ -164,7 +164,7 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     if (kingMasks[sq] & king) return true;
 
     // IMPORTANT: pawn attacks MUST be precomputed as "attacks TO sq"
-    if (pawnMasks[attackerColor ^ 1][sq] & pawns) return true;
+    if (pawnMasks[attackerColor][sq] & pawns) return true;
 
     if (getBishopAttacks(sq, board.occupied) & (bishops | queens)) return true;
     if (getRookAttacks(sq, board.occupied) & (rooks | queens)) return true;
@@ -370,41 +370,80 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     }
 }
 
-int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing){
-    if (depth == 0) {
+int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha, int beta)
+{
+    if (depth == 0)
         return board.evaluate();
-    }
-    int bestScore = isMaximizing ? INT_MIN : INT_MAX;
+
     MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
-    for (int i = 0; i < legalMoves.count; i++) {
-        Move move = legalMoves.moves[i];
-        Board copy = board;
-        copy.makeMove(move);
-        int score = minimax(copy, depth - 1, !isMaximizing);
-        if (isMaximizing) {
-            bestScore = max(score, bestScore);
-        } else {
-            bestScore = min(score, bestScore);
+
+    orderMoves(legalMoves, board);
+
+    if (isMaximizing)
+    {
+        int bestScore = INT_MIN;
+
+        for (int i = 0; i < legalMoves.count; i++)
+        {
+            Move move = legalMoves.moves[i];
+
+            Board copy = board;
+            copy.makeMove(move);
+
+            int score = minimax(copy, depth - 1, false, alpha, beta);
+
+            bestScore = max(bestScore, score);
+            alpha = max(alpha, bestScore);
+
+            if (alpha >= beta)
+                break; // ✂️ prune
         }
+
+        return bestScore;
     }
-    return bestScore;
+    else
+    {
+        int bestScore = INT_MAX;
+
+        for (int i = 0; i < legalMoves.count; i++)
+        {
+            Move move = legalMoves.moves[i];
+
+            Board copy = board;
+            copy.makeMove(move);
+
+            int score = minimax(copy, depth - 1, true, alpha, beta);
+
+            bestScore = min(bestScore, score);
+            beta = min(beta, bestScore);
+
+            if (beta <= alpha)
+                break; 
+        }
+
+        return bestScore;
+    }
 }
 
 Move GenerateMoves::getBestMove(Board& board, int depth)
 {
     Move bestMove;
     bool isWhite = board.sideToMove == 0;
+
     int bestScore = isWhite ? INT_MIN : INT_MAX;
 
     MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
 
+    orderMoves(legalMoves, board);
+
     for (int i = 0; i < legalMoves.count; i++)
     {
         Move move = legalMoves.moves[i];
+
         Board copy = board;
         copy.makeMove(move);
 
-        int score = minimax(copy, depth - 1, copy.sideToMove == 0);
+        int score = minimax(copy, depth - 1, !isWhite, INT_MIN, INT_MAX);
 
         if (isWhite ? score > bestScore : score < bestScore)
         {
@@ -414,4 +453,29 @@ Move GenerateMoves::getBestMove(Board& board, int depth)
     }
 
     return bestMove;
+}
+
+void GenerateMoves::orderMoves(MoveList& list, const Board& board){
+    int pieceValues[] = {100, 320, 330, 500, 900, 10000};
+    int scores[256];
+    for(int i = 0; i < list.count; i++){
+        Move move = list.moves[i];
+        int toSq = move.getTo();
+        int fromSq = move.getFrom();
+        int capturedPiece = board.getPieceAt(toSq);
+        int movingPiece = board.getPieceAt(fromSq);
+        int score = 0;
+        if (capturedPiece != -1){
+            score += pieceValues[capturedPiece] - pieceValues[movingPiece];
+        }
+        scores[i] = score;  
+    }
+    for(int i=0; i < list.count - 1; i++){
+        for(int j=0; j < list.count - i - 1; j++){
+            if (scores[j] < scores[j + 1]){
+                swap(scores[j], scores[j + 1]);
+                swap(list.moves[j], list.moves[j + 1]);
+            }
+        }
+    }
 }

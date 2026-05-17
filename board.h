@@ -34,6 +34,9 @@ public:
     int sideToMove = 0; // 0 = white, 1 = black
     int enPassantSquare = -1;
     uint8_t castlingRights = 0;
+    uint64_t positionHistory[500];
+    int historyCount = 0;
+    uint64_t zobristHash = 0;
 
     // ===== FUNCTIONS =====
     void init();
@@ -49,6 +52,14 @@ public:
     void makeMove(Move move);
 
     bool isOccupied(int sq) const;
+    void initZobrist();
+    bool isThreefoldRepetition();
+
+    uint64_t zobristTable[2][6][64];  // color, piece type, square
+    uint64_t zobristSideToMove;    // 1 number for side
+    uint64_t zobristCastling[4];    // 4 castling rights
+    uint64_t zobristEnPassant[8];    // 8 files
+
 };
 
 #endif
