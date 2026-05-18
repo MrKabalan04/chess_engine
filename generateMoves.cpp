@@ -173,7 +173,7 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     return false;
 }
 
-MoveList GenerateMoves::generateLegalMoves(const Board& board, int side)
+MoveList GenerateMoves::generateLegalMoves(Board& board, int side)
 {
     MoveList pseudoLegalMoves;
     generateAllMoves(board, side, pseudoLegalMoves);
@@ -186,17 +186,18 @@ MoveList GenerateMoves::generateLegalMoves(const Board& board, int side)
     {
         Move move = pseudoLegalMoves.moves[i];
 
-        Board copy = board;   // IMPORTANT: fresh copy per move
-        copy.makeMove(move);
+        board.makeMove(move);
 
         int kingSq = (side == 0)
-            ? __builtin_ctzll(copy.whiteKing)
-            : __builtin_ctzll(copy.blackKing);
+            ? __builtin_ctzll(board.whiteKing)
+            : __builtin_ctzll(board.blackKing);
 
-        if (!isSquareAttacked(kingSq, opponent, copy))
+        if (!isSquareAttacked(kingSq, opponent, board))
         {
             legalMoves.addMove(move);
         }
+
+        board.undoMove();
     }
 
     return legalMoves;
@@ -210,7 +211,7 @@ bool GenerateMoves::isInCheck(const Board& board, int side){
     return isSquareAttacked(kingSq, opponent, board);
 }
 
-bool GenerateMoves::isCheckmate(const Board& board, int side){
+bool GenerateMoves::isCheckmate(Board& board, int side){
     if (!isInCheck(board, side)){
         return false;
     }
@@ -218,7 +219,7 @@ bool GenerateMoves::isCheckmate(const Board& board, int side){
     return legalMoves.count == 0;
 }
 
-bool GenerateMoves::isStalemate(const Board& board, int side){
+bool GenerateMoves::isStalemate( Board& board, int side){
     if (isInCheck(board, side)){
         return false;
     }
@@ -231,6 +232,7 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
     uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
     uint64_t occupied = board.occupied;
+
     int enemy = side ^ 1;
 
     // =========================
@@ -282,7 +284,7 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     }
 
     // =========================
-    // QUEEN
+    // QUEENS
     // =========================
     uint64_t queens = (side == 0) ? board.whiteQueen : board.blackQueen;
 
@@ -294,7 +296,7 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     }
 
     // =========================
-    // KING MOVES (LEGAL ONLY)
+    // KING MOVES
     // =========================
     int kingSq = (side == 0)
         ? __builtin_ctzll(board.whiteKing)
@@ -302,23 +304,25 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
 
     generateKingMoves(kingSq, side, board, list);
 
-    // =========================
-    // CASTLING
-    // =========================
+    // ======================================================
+    // FAST CASTLING SAFETY CHECK (OPTIMIZED)
+    // ======================================================
 
-    // If king is in check → NO CASTLING
+    // If king is in check → no castling
     if (isSquareAttacked(kingSq, enemy, board))
         return;
 
-    // ======================================================
+    const uint64_t occ = occupied;
+
+    // =========================
     // WHITE CASTLING
-    // ======================================================
+    // =========================
     if (side == 0)
     {
-        // KING SIDE (e1 -> g1)
+        // KING SIDE
         if (board.castlingRights & WHITE_CASTLING_KINGSIDE)
         {
-            if (!(occupied & ((1ULL << 5) | (1ULL << 6))) &&
+            if (!(occ & ((1ULL << 5) | (1ULL << 6))) &&
                 !isSquareAttacked(4, enemy, board) &&
                 !isSquareAttacked(5, enemy, board) &&
                 !isSquareAttacked(6, enemy, board))
@@ -327,10 +331,10 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
             }
         }
 
-        // QUEEN SIDE (e1 -> c1)
+        // QUEEN SIDE
         if (board.castlingRights & WHITE_CASTLING_QUEENSIDE)
         {
-            if (!(occupied & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) &&
+            if (!(occ & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) &&
                 !isSquareAttacked(4, enemy, board) &&
                 !isSquareAttacked(3, enemy, board) &&
                 !isSquareAttacked(2, enemy, board))
@@ -340,15 +344,15 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
         }
     }
 
-    // ======================================================
+    // =========================
     // BLACK CASTLING
-    // ======================================================
+    // =========================
     else
     {
-        // KING SIDE (e8 -> g8)
+        // KING SIDE
         if (board.castlingRights & BLACK_CASTLING_KINGSIDE)
         {
-            if (!(occupied & ((1ULL << 61) | (1ULL << 62))) &&
+            if (!(occ & ((1ULL << 61) | (1ULL << 62))) &&
                 !isSquareAttacked(60, enemy, board) &&
                 !isSquareAttacked(61, enemy, board) &&
                 !isSquareAttacked(62, enemy, board))
@@ -357,10 +361,10 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
             }
         }
 
-        // QUEEN SIDE (e8 -> c8)
+        // QUEEN SIDE
         if (board.castlingRights & BLACK_CASTLING_QUEENSIDE)
         {
-            if (!(occupied & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))) &&
+            if (!(occ & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))) &&
                 !isSquareAttacked(60, enemy, board) &&
                 !isSquareAttacked(59, enemy, board) &&
                 !isSquareAttacked(58, enemy, board))
@@ -452,11 +456,25 @@ int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha
 Move GenerateMoves::getBestMove(Board& board, int depth)
 {
     Move bestMove;
+
+    for (int d = 1; d <= depth; d++)
+    {
+        bestMove = searchDepth(board, d);
+    }
+
+    return bestMove;
+}
+
+Move GenerateMoves::searchDepth(Board& board, int depth)
+{
+    Move bestMove;
+
     bool isWhite = board.sideToMove == 0;
 
     int bestScore = isWhite ? INT_MIN : INT_MAX;
 
-    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
+    MoveList legalMoves =
+        generateLegalMoves(board, board.sideToMove);
 
     orderMoves(legalMoves, board);
 
@@ -465,40 +483,103 @@ Move GenerateMoves::getBestMove(Board& board, int depth)
         Move move = legalMoves.moves[i];
 
         board.makeMove(move);
-        int score = minimax(board, depth - 1, !isWhite, INT_MIN, INT_MAX);
+
+        int score = minimax(
+            board,
+            depth - 1,
+            !isWhite,
+            INT_MIN,
+            INT_MAX
+        );
+
         board.undoMove();
 
-        if (isWhite ? score > bestScore : score < bestScore)
+        if (isWhite)
         {
-            bestScore = score;
-            bestMove = move;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestMove = move;
+            }
+        }
+        else
+        {
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestMove = move;
+            }
         }
     }
 
     return bestMove;
 }
 
-void GenerateMoves::orderMoves(MoveList& list, const Board& board){
-    int pieceValues[] = {100, 320, 330, 500, 900, 10000};
+void GenerateMoves::orderMoves(MoveList& list, const Board& board)
+{
+    static const int pieceValues[6] = {100, 320, 330, 500, 900, 10000};
+
     int scores[256];
-    for(int i = 0; i < list.count; i++){
+
+    TTEntry& entry = transpositionTable[board.zobristHash % TT_SIZE];
+    bool hasTTMove = (entry.zobristHash == board.zobristHash);
+
+    Move ttMove = entry.bestMove;
+
+    for (int i = 0; i < list.count; i++)
+    {
         Move move = list.moves[i];
-        int toSq = move.getTo();
-        int fromSq = move.getFrom();
-        int capturedPiece = board.getPieceAt(toSq);
-        int movingPiece = board.getPieceAt(fromSq);
+
         int score = 0;
-        if (capturedPiece != -1){
-            score += pieceValues[capturedPiece] - pieceValues[movingPiece];
+
+        // =========================
+        // TT MOVE HIGHEST PRIORITY
+        // =========================
+        if (hasTTMove &&
+            move.getFrom() == ttMove.getFrom() &&
+            move.getTo()   == ttMove.getTo())
+        {
+            scores[i] = 1000000;
+            continue;
         }
-        scores[i] = score;  
+
+        int captured = board.getPieceAt(move.getTo());
+
+        // =========================
+        // CAPTURE PRIORITY (MVV-LVA)
+        // Most Valuable Victim - Least Valuable Attacker
+        // =========================
+        if (captured != -1)
+        {
+            int attacker = board.getPieceAt(move.getFrom());
+            score = pieceValues[captured] * 10 - pieceValues[attacker];
+        }
+
+        // small bonus for promotions
+        if (move.getType() >= PROMOT_QUEEN)
+            score += 9000;
+
+        scores[i] = score;
     }
-    for(int i=0; i < list.count - 1; i++){
-        for(int j=0; j < list.count - i - 1; j++){
-            if (scores[j] < scores[j + 1]){
-                swap(scores[j], scores[j + 1]);
-                swap(list.moves[j], list.moves[j + 1]);
-            }
+
+    // =========================
+    // SORT (insertion sort)
+    // =========================
+    for (int i = 1; i < list.count; i++)
+    {
+        Move keyMove = list.moves[i];
+        int keyScore = scores[i];
+
+        int j = i - 1;
+
+        while (j >= 0 && scores[j] < keyScore)
+        {
+            scores[j + 1] = scores[j];
+            list.moves[j + 1] = list.moves[j];
+            j--;
         }
+
+        scores[j + 1] = keyScore;
+        list.moves[j + 1] = keyMove;
     }
 }

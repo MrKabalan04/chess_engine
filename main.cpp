@@ -190,7 +190,7 @@ int main()
         else
         {
             cout << "Engine thinking...\n";
-            Move bestMove = gen.getBestMove(board, 5);
+            Move bestMove = gen.getBestMove(board, 7);
 
             // =========================
             // SAFETY CHECK (VERY IMPORTANT)

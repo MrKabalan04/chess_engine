@@ -745,26 +745,18 @@ int Board::evaluate()
 
 void Board::initZobrist()
 {
-   mt19937_64 rng(123456789); // fixed seed
-   uint64_t randomNumber = rng();
-    for (int color = 0; color < 2; color++)
-    {
-        for (int piece = 0; piece < 6; piece++)
-        {
-            for (int sq = 0; sq < 64; sq++)
-            {
-                zobristTable[color][piece][sq] = rng();
-            }
-        }
-    }
-    for (int i = 0; i < 4; i++){
-        zobristCastling[i] = rng();
-    }
-        
-    for (int i = 0; i < 8; i++){
-        zobristEnPassant[i] = rng();
-    }
-        
-    zobristSideToMove = rng();
+    std::mt19937_64 rng(123456789);
 
+    uint64_t* ptr = &zobristTable[0][0][0];
+
+    for (int i = 0; i < 2 * 6 * 64; i++)
+        ptr[i] = rng();
+
+    for (int i = 0; i < 4; i++)
+        zobristCastling[i] = rng();
+
+    for (int i = 0; i < 8; i++)
+        zobristEnPassant[i] = rng();
+
+    zobristSideToMove = rng();
 }

@@ -77,12 +77,13 @@ public:
     bool isSquareAttacked(int sq, int attackerColor, const Board& board);
 
     void generateAllMoves(const Board& board, int side, MoveList& list);
-    MoveList generateLegalMoves(const Board& board, int side );
+    MoveList generateLegalMoves(Board& board, int side );
     bool isInCheck(const Board& board, int side);
-    bool isCheckmate(const Board& board, int side);
-    bool isStalemate(const Board& board, int side);
+    bool isCheckmate(Board& board, int side);
+    bool isStalemate(Board& board, int side);
     int minimax(Board& board, int depth, bool isMaximizing, int alpha, int beta);
     Move getBestMove(Board& board, int depth);
+    Move searchDepth(Board& board, int depth);
     void orderMoves(MoveList& list, const Board& board);
 };
 

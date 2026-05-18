@@ -4,20 +4,19 @@
 #include <cstdint>
 using namespace std;
 
-void GenerateMoves::initPawnAttacks() {
-    for (int sq = 0; sq <64; sq++){
-        uint64_t bit = (1ULL << sq);
-        pawnMasks[0][sq] = 0ULL;
+void GenerateMoves::initPawnAttacks()
+{
+    for (int sq = 0; sq < 64; sq++)
+    {
+        uint64_t bit = 1ULL << sq;
 
-        if( bit & ~COLUMN_A) pawnMasks[0][sq] |= (bit << 7); // White Pawn captures to the left
-        if( bit & ~COLUMN_H) pawnMasks[0][sq] |= (bit << 9); // White Pawn captures to the right
+        pawnMasks[0][sq] =
+            ((bit & ~COLUMN_H) << 9) |
+            ((bit & ~COLUMN_A) << 7);
 
-        pawnMasks[1][sq] = 0ULL;
-
-        if( bit & ~COLUMN_A) pawnMasks[1][sq] |= (bit >> 9); // Black Pawn captures to the left
-        if( bit & ~COLUMN_H) pawnMasks[1][sq] |= (bit >> 7); // Black Pawn captures to the right    
-
-
+        pawnMasks[1][sq] =
+            ((bit & ~COLUMN_A) >> 9) |
+            ((bit & ~COLUMN_H) >> 7);
     }
 }
 
