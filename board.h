@@ -27,7 +27,9 @@ public:
     uint64_t blackPieces = 0ULL;
     uint64_t occupied = 0ULL;
 
-    
+    UndoInfo undoStack[500];
+    int undoCount = 0;
+
 
 
     // ===== GAME STATE =====
@@ -54,6 +56,7 @@ public:
     bool isOccupied(int sq) const;
     void initZobrist();
     bool isThreefoldRepetition();
+    void undoMove();
 
     uint64_t zobristTable[6][2][64];  // piece, color, type, square
     uint64_t zobristSideToMove;    // 1 number for side

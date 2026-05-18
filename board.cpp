@@ -273,28 +273,56 @@ void Board::makeMove(Move move)
     if (movingPiece == -1) return;
 
     int pieceType = (movingPiece <= 5) ? movingPiece : (movingPiece - 6);
-    int color = (movingPiece <= 5) ? 0 : 1;
+    int color     = (movingPiece <= 5) ? 0 : 1;
 
-    int captured = getPieceAt(to);
+    int captured = -1;
 
     // =========================
-    // REMOVE FROM-SQUARE (ZOBRIST)
+    // HANDLE EN PASSANT CAPTURE SQUARE
+    // =========================
+    if (type == EN_PASSANT)
+    {
+        int capSq = (side == 0) ? (to - 8) : (to + 8);
+        captured = getPieceAt(capSq);
+    }
+    else
+    {
+        captured = getPieceAt(to);
+    }
+
+    // =========================
+    // SAVE UNDO INFO
+    // =========================
+    UndoInfo& undo = undoStack[undoCount++];
+
+    undo.move = move;
+    undo.movedPiece = movingPiece;
+    undo.capturedPiece = captured;
+
+    undo.castlingRights = castlingRights;
+    undo.enPassantSquare = enPassantSquare;
+    undo.zobristHash = zobristHash;
+
+    // =========================
+    // ZOBRIST: REMOVE FROM SQUARE
     // =========================
     zobristHash ^= zobristTable[pieceType][color][from];
 
+    // remove moving piece from board
+    removePiece(from, pieceType, side == 0);
+
     // =========================
-    // CASTLING (SPECIAL CASE - EXIT EARLY)
+    // CASTLING
     // =========================
     if (type == CASTLE)
     {
-        // move king
-        removePiece(from, KING, side == 0);
+        // king move
         addPiece(to, KING, side == 0);
         zobristHash ^= zobristTable[KING][color][to];
 
-        // white
         if (side == 0)
         {
+            // white
             if (to == 6)
             {
                 removePiece(7, ROOK, true);
@@ -312,9 +340,9 @@ void Board::makeMove(Move move)
                 zobristHash ^= zobristTable[ROOK][0][3];
             }
         }
-        // black
         else
         {
+            // black
             if (to == 62)
             {
                 removePiece(63, ROOK, false);
@@ -333,11 +361,11 @@ void Board::makeMove(Move move)
             }
         }
 
-        goto finalize; // SAFE EXIT
+        goto finalize;
     }
 
     // =========================
-    // HANDLE CAPTURE
+    // CAPTURE (NORMAL)
     // =========================
     if (captured != -1 && type != EN_PASSANT)
     {
@@ -347,9 +375,6 @@ void Board::makeMove(Move move)
         removePiece(to, capType, opponent == 0);
     }
 
-    // remove moving piece from board
-    removePiece(from, pieceType, side == 0);
-
     // =========================
     // EN PASSANT
     // =========================
@@ -357,11 +382,15 @@ void Board::makeMove(Move move)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
 
-        zobristHash ^= zobristTable[PAWN][opponent][capSq];
-        removePiece(capSq, PAWN, opponent == 0);
+        int capPiece = getPieceAt(capSq);
+        if (capPiece != -1)
+        {
+            zobristHash ^= zobristTable[PAWN][opponent][capSq];
+            removePiece(capSq, PAWN, opponent == 0);
+        }
 
-        zobristHash ^= zobristTable[pieceType][color][to];
         addPiece(to, PAWN, side == 0);
+        zobristHash ^= zobristTable[PAWN][color][to];
 
         goto finalize;
     }
@@ -377,8 +406,8 @@ void Board::makeMove(Move move)
         if (type == PROMOT_BISHOP) newType = BISHOP;
         if (type == PROMOT_KNIGHT) newType = KNIGHT;
 
-        zobristHash ^= zobristTable[newType][color][to];
         addPiece(to, newType, side == 0);
+        zobristHash ^= zobristTable[newType][color][to];
 
         goto finalize;
     }
@@ -386,8 +415,8 @@ void Board::makeMove(Move move)
     // =========================
     // NORMAL MOVE
     // =========================
-    zobristHash ^= zobristTable[pieceType][color][to];
     addPiece(to, pieceType, side == 0);
+    zobristHash ^= zobristTable[pieceType][color][to];
 
 finalize:
 
@@ -416,7 +445,7 @@ finalize:
     }
 
     // =========================
-    // EN PASSANT HASH UPDATE
+    // EN PASSANT UPDATE (ZOBRIST)
     // =========================
     if (enPassantSquare != -1)
         zobristHash ^= zobristEnPassant[enPassantSquare % 8];
@@ -451,6 +480,126 @@ bool Board::isThreefoldRepetition()
             count++;
     }
     return count >= 2;
+}
+
+void Board::undoMove()
+{
+    if (undoCount == 0) return;
+
+    UndoInfo info = undoStack[--undoCount];
+
+    Move move = info.move;
+
+    int from = move.getFrom();
+    int to   = move.getTo();
+    int type = move.getType();
+
+    // restore global state
+    sideToMove ^= 1;
+    castlingRights = info.castlingRights;
+    enPassantSquare = info.enPassantSquare;
+    zobristHash = info.zobristHash;
+
+    int side = sideToMove;
+    int opponent = side ^ 1;
+
+    int piece = getPieceAt(to);
+
+    int pieceType = info.movedPiece;
+
+    // remove moved piece from destination
+    removePiece(to, pieceType, side == 0);
+
+    // =========================
+    // CASTLING
+    // =========================
+    if (type == CASTLE)
+    {
+        addPiece(from, KING, side == 0);
+
+        // white
+        if (side == 0)
+        {
+            if (to == 6)
+            {
+                removePiece(5, ROOK, true);
+                addPiece(7, ROOK, true);
+            }
+            else if (to == 2)
+            {
+                removePiece(3, ROOK, true);
+                addPiece(0, ROOK, true);
+            }
+        }
+        // black
+        else
+        {
+            if (to == 62)
+            {
+                removePiece(61, ROOK, false);
+                addPiece(63, ROOK, false);
+            }
+            else if (to == 58)
+            {
+                removePiece(59, ROOK, false);
+                addPiece(56, ROOK, false);
+            }
+        }
+    }
+
+    // =========================
+    // PROMOTION
+    // =========================
+    else if (type >= PROMOT_QUEEN)
+    {
+        addPiece(from, PAWN, side == 0);
+
+        if (info.capturedPiece != -1)
+        {
+            int capType =
+                (info.capturedPiece <= 5)
+                ? info.capturedPiece
+                : info.capturedPiece - 6;
+
+            addPiece(to, capType, opponent == 0);
+        }
+    }
+
+    // =========================
+    // EN PASSANT
+    // =========================
+    else if (type == EN_PASSANT)
+    {
+        addPiece(from, PAWN, side == 0);
+
+        int capSq =
+            (side == 0)
+            ? (to - 8)
+            : (to + 8);
+
+        addPiece(capSq, PAWN, opponent == 0);
+    }
+
+    // =========================
+    // NORMAL MOVE
+    // =========================
+    else
+    {
+        addPiece(from, pieceType, side == 0);
+
+        if (info.capturedPiece != -1)
+        {
+            int capType =
+                (info.capturedPiece <= 5)
+                ? info.capturedPiece
+                : info.capturedPiece - 6;
+
+            addPiece(to, capType, opponent == 0);
+        }
+    }
+
+    updateOccupancy();
+    historyCount--;
 }
 
 // =========================

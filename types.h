@@ -49,6 +49,16 @@ struct Move {
     int getType() const { return (data >> 12) & 0xF; }
 };
 
+struct UndoInfo {
+    int movedPiece;
+    Move move;
+    int capturedPiece;
+    uint8_t castlingRights;
+    int enPassantSquare;
+    uint64_t zobristHash;
+};
+
+
 // Move list to store generated moves
 struct MoveList {
     Move moves[256];

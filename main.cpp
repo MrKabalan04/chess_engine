@@ -190,8 +190,7 @@ int main()
         else
         {
             cout << "Engine thinking...\n";
-            cout << "Legal moves for engine: " << legal.count << endl;
-            Move bestMove = gen.getBestMove(board, 1);
+            Move bestMove = gen.getBestMove(board, 5);
 
             // =========================
             // SAFETY CHECK (VERY IMPORTANT)

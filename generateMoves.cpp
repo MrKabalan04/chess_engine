@@ -417,11 +417,10 @@ int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha
         {
             Move move = legalMoves.moves[i];
 
-            Board copy = board;
-            copy.makeMove(move);
-
-            int score = minimax(copy, depth - 1, true, alpha, beta);
-
+            board.makeMove(move);
+            int score = minimax(board, depth - 1, !isMaximizing, alpha, beta);
+            board.undoMove();
+            
             bestScore = min(bestScore, score);
             beta = min(beta, bestScore);
 
@@ -448,10 +447,9 @@ Move GenerateMoves::getBestMove(Board& board, int depth)
     {
         Move move = legalMoves.moves[i];
 
-        Board copy = board;
-        copy.makeMove(move);
-
-        int score = minimax(copy, depth - 1, !isWhite, INT_MIN, INT_MAX);
+        board.makeMove(move);
+        int score = minimax(board, depth - 1, !isWhite, INT_MIN, INT_MAX);
+        board.undoMove();
 
         if (isWhite ? score > bestScore : score < bestScore)
         {
