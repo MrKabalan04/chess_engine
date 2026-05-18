@@ -272,146 +272,136 @@ void Board::makeMove(Move move)
     int movingPiece = getPieceAt(from);
     if (movingPiece == -1) return;
 
-    int color = (movingPiece <= 5) ? 0 : 1;
     int pieceType = (movingPiece <= 5) ? movingPiece : (movingPiece - 6);
+    int color = (movingPiece <= 5) ? 0 : 1;
 
     int captured = getPieceAt(to);
 
     // =========================
-    // REMOVE MOVING PIECE FROM OLD SQUARE
+    // REMOVE FROM-SQUARE (ZOBRIST)
     // =========================
     zobristHash ^= zobristTable[pieceType][color][from];
+
+    // =========================
+    // CASTLING (SPECIAL CASE - EXIT EARLY)
+    // =========================
+    if (type == CASTLE)
+    {
+        // move king
+        removePiece(from, KING, side == 0);
+        addPiece(to, KING, side == 0);
+        zobristHash ^= zobristTable[KING][color][to];
+
+        // white
+        if (side == 0)
+        {
+            if (to == 6)
+            {
+                removePiece(7, ROOK, true);
+                addPiece(5, ROOK, true);
+
+                zobristHash ^= zobristTable[ROOK][0][7];
+                zobristHash ^= zobristTable[ROOK][0][5];
+            }
+            else if (to == 2)
+            {
+                removePiece(0, ROOK, true);
+                addPiece(3, ROOK, true);
+
+                zobristHash ^= zobristTable[ROOK][0][0];
+                zobristHash ^= zobristTable[ROOK][0][3];
+            }
+        }
+        // black
+        else
+        {
+            if (to == 62)
+            {
+                removePiece(63, ROOK, false);
+                addPiece(61, ROOK, false);
+
+                zobristHash ^= zobristTable[ROOK][1][63];
+                zobristHash ^= zobristTable[ROOK][1][61];
+            }
+            else if (to == 58)
+            {
+                removePiece(56, ROOK, false);
+                addPiece(59, ROOK, false);
+
+                zobristHash ^= zobristTable[ROOK][1][56];
+                zobristHash ^= zobristTable[ROOK][1][59];
+            }
+        }
+
+        goto finalize; // SAFE EXIT
+    }
 
     // =========================
     // HANDLE CAPTURE
     // =========================
     if (captured != -1 && type != EN_PASSANT)
     {
-        int capColor = opponent;
         int capType = (captured <= 5) ? captured : (captured - 6);
 
-        zobristHash ^= zobristTable[capType][capColor][to];
+        zobristHash ^= zobristTable[capType][opponent][to];
+        removePiece(to, capType, opponent == 0);
     }
 
-    // =========================
-    // REMOVE PIECE FROM BOARD
-    // =========================
-    removePiece(from, movingPiece, side == 0);
-
-    // =========================
-    // SPECIAL: CASTLING
-    // =========================
-    if (type == CASTLE)
-    {
-        // KING MOVE (already handled logically)
-
-        if (side == 0)
-        {
-            // white king
-            if (from == 4 && to == 6)
-            {
-                // rook h1 -> f1
-                zobristHash ^= zobristTable[ROOK][0][7];
-                zobristHash ^= zobristTable[ROOK][0][5];
-
-                removePiece(7, ROOK, true);
-                addPiece(5, ROOK, true);
-            }
-            else if (from == 4 && to == 2)
-            {
-                // rook a1 -> d1
-                zobristHash ^= zobristTable[ROOK][0][0];
-                zobristHash ^= zobristTable[ROOK][0][3];
-
-                removePiece(0, ROOK, true);
-                addPiece(3, ROOK, true);
-            }
-        }
-        else
-        {
-            // black king
-            if (from == 60 && to == 62)
-            {
-                zobristHash ^= zobristTable[ROOK][1][63];
-                zobristHash ^= zobristTable[ROOK][1][61];
-
-                removePiece(63, ROOK, false);
-                addPiece(61, ROOK, false);
-            }
-            else if (from == 60 && to == 58)
-            {
-                zobristHash ^= zobristTable[ROOK][1][56];
-                zobristHash ^= zobristTable[ROOK][1][59];
-
-                removePiece(56, ROOK, false);
-                addPiece(59, ROOK, false);
-            }
-        }
-
-        // KING appears on destination
-        zobristHash ^= zobristTable[KING][color][to];
-        addPiece(to, KING, side == 0);
-    }
+    // remove moving piece from board
+    removePiece(from, pieceType, side == 0);
 
     // =========================
     // EN PASSANT
     // =========================
-    else if (type == EN_PASSANT)
+    if (type == EN_PASSANT)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
-        int capPiece = getPieceAt(capSq);
 
-        if (capPiece == PAWN)
-        {
-            int capColor = opponent;
+        zobristHash ^= zobristTable[PAWN][opponent][capSq];
+        removePiece(capSq, PAWN, opponent == 0);
 
-            zobristHash ^= zobristTable[0][capColor][capSq];
-            removePiece(capSq, PAWN, opponent == 0);
-        }
-
-        // move pawn to target square
         zobristHash ^= zobristTable[pieceType][color][to];
         addPiece(to, PAWN, side == 0);
+
+        goto finalize;
     }
 
     // =========================
     // PROMOTION
     // =========================
-    else if (type >= PROMOT_QUEEN)
+    if (type >= PROMOT_QUEEN)
     {
-        int promoType = pieceType; // pawn already removed
+        int newType = QUEEN;
 
-        int newType = 0;
-        if (type == PROMOT_QUEEN)  newType = QUEEN;
         if (type == PROMOT_ROOK)   newType = ROOK;
         if (type == PROMOT_BISHOP) newType = BISHOP;
         if (type == PROMOT_KNIGHT) newType = KNIGHT;
 
         zobristHash ^= zobristTable[newType][color][to];
-
         addPiece(to, newType, side == 0);
+
+        goto finalize;
     }
 
     // =========================
     // NORMAL MOVE
     // =========================
-    else
-    {
-        zobristHash ^= zobristTable[pieceType][color][to];
-        addPiece(to, movingPiece, side == 0);
-    }
+    zobristHash ^= zobristTable[pieceType][color][to];
+    addPiece(to, pieceType, side == 0);
+
+finalize:
 
     // =========================
-    // CASTLING RIGHTS UPDATE (NOT HASHED HERE)
+    // CASTLING RIGHTS UPDATE
     // =========================
-    if (movingPiece == KING)
+    if (pieceType == KING)
     {
         if (side == 0)
             castlingRights &= ~(WHITE_CASTLING_KINGSIDE | WHITE_CASTLING_QUEENSIDE);
         else
             castlingRights &= ~(BLACK_CASTLING_KINGSIDE | BLACK_CASTLING_QUEENSIDE);
     }
-    else if (movingPiece == ROOK)
+    else if (pieceType == ROOK)
     {
         if (side == 0)
         {
@@ -426,8 +416,11 @@ void Board::makeMove(Move move)
     }
 
     // =========================
-    // EN PASSANT SQUARE UPDATE
+    // EN PASSANT HASH UPDATE
     // =========================
+    if (enPassantSquare != -1)
+        zobristHash ^= zobristEnPassant[enPassantSquare % 8];
+
     if (type == DOUBLE_PUSH)
     {
         enPassantSquare = (side == 0) ? (to - 8) : (to + 8);
@@ -439,17 +432,15 @@ void Board::makeMove(Move move)
     }
 
     // =========================
-    // TOGGLE SIDE
+    // SIDE TO MOVE
     // =========================
     zobristHash ^= zobristSideToMove;
     sideToMove ^= 1;
 
-    
     updateOccupancy();
-    positionHistory[historyCount] = zobristHash;
-    historyCount++;
-}
 
+    positionHistory[historyCount++] = zobristHash;
+}
 
 bool Board::isThreefoldRepetition()
 {

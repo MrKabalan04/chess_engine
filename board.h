@@ -55,7 +55,7 @@ public:
     void initZobrist();
     bool isThreefoldRepetition();
 
-    uint64_t zobristTable[2][6][64];  // color, piece type, square
+    uint64_t zobristTable[6][2][64];  // piece, color, type, square
     uint64_t zobristSideToMove;    // 1 number for side
     uint64_t zobristCastling[4];    // 4 castling rights
     uint64_t zobristEnPassant[8];    // 8 files

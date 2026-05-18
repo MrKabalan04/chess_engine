@@ -170,6 +170,7 @@ int main()
 
                 if (m.getFrom() == from && m.getTo() == to)
                 {
+                    cout << "Playing: " << sq(m.getFrom()) << sq(m.getTo()) << " type: " << m.getType() << endl;
                     board.makeMove(m);
                     found = true;
                     break;
@@ -189,8 +190,8 @@ int main()
         else
         {
             cout << "Engine thinking...\n";
-
-            Move bestMove = gen.getBestMove(board, 4);
+            cout << "Legal moves for engine: " << legal.count << endl;
+            Move bestMove = gen.getBestMove(board, 1);
 
             // =========================
             // SAFETY CHECK (VERY IMPORTANT)
@@ -218,6 +219,7 @@ int main()
                  << sq(bestMove.getTo()) << endl;
 
             board.makeMove(bestMove);
+            cout << "Engine move made successfully\n";
         }
     }
 

@@ -377,6 +377,14 @@ int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha
 
     MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
 
+    if (legalMoves.count == 0)
+    {
+    if (isInCheck(board, board.sideToMove))
+        return isMaximizing ? -100000 : 100000;
+    else
+        return 0; // stalemate
+    }
+
     orderMoves(legalMoves, board);
 
     if (isMaximizing)
