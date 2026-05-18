@@ -17,6 +17,9 @@ public:
     static const uint64_t ROW_2 = 0x000000000000FF00ULL; 
     static const uint64_t ROW_7 = 0x00FF000000000000ULL;   
     static const uint64_t ROW_8 = 0xFF00000000000000ULL;
+   
+    static const int TT_SIZE = 1 << 20;
+    static TTEntry transpositionTable[TT_SIZE];
 
     // Precomputed move masks for each piece type and square
     uint64_t knightMasks[64];

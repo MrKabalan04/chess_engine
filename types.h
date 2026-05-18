@@ -70,4 +70,21 @@ struct MoveList {
     }
 };
 
+
+enum TTFlag {
+    EXACT = 0,
+    BETA  = 1,  
+    ALPHA = 2   
+};
+
+struct TTEntry {
+    uint64_t zobristHash;
+    Move bestMove;
+    int depth;
+    int score;
+    TTFlag flag;
+};
+
+
+
 #endif

@@ -8,6 +8,7 @@ using namespace std;
 
 uint64_t GenerateMoves::rookTable[64][4096];
 uint64_t GenerateMoves::bishopTable[64][512];
+TTEntry GenerateMoves::transpositionTable[TT_SIZE];
 
 void GenerateMoves::init() {
 
@@ -372,6 +373,19 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
 
 int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha, int beta)
 {
+    int index = board.zobristHash % TT_SIZE;
+    TTEntry& entry = transpositionTable[index];
+
+    if (entry.zobristHash == board.zobristHash)
+    {
+        if (entry.depth >= depth)
+        {
+            if (entry.flag == EXACT) return entry.score;
+            if (entry.flag == BETA  && entry.score >= beta)  return entry.score;
+            if (entry.flag == ALPHA && entry.score <= alpha) return entry.score;
+        }
+    }
+
     if (depth == 0)
         return board.evaluate();
 
@@ -379,57 +393,60 @@ int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha
 
     if (legalMoves.count == 0)
     {
-    if (isInCheck(board, board.sideToMove))
-        return isMaximizing ? -100000 : 100000;
-    else
-        return 0; // stalemate
+        if (isInCheck(board, board.sideToMove))
+            return isMaximizing ? -100000 : 100000;
+        else
+            return 0;
     }
 
     orderMoves(legalMoves, board);
 
-    if (isMaximizing)
+    Move bestMove;
+    int bestScore = isMaximizing ? INT_MIN : INT_MAX;
+
+    for (int i = 0; i < legalMoves.count; i++)
     {
-        int bestScore = INT_MIN;
+        Move move = legalMoves.moves[i];
 
-        for (int i = 0; i < legalMoves.count; i++)
+        board.makeMove(move);
+        int score = minimax(board, depth - 1, !isMaximizing, alpha, beta);
+        board.undoMove();
+
+        if (isMaximizing)
         {
-            Move move = legalMoves.moves[i];
-
-            Board copy = board;
-            copy.makeMove(move);
-
-            int score = minimax(copy, depth - 1, false, alpha, beta);
-
-            bestScore = max(bestScore, score);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestMove = move;
+            }
             alpha = max(alpha, bestScore);
-
-            if (alpha >= beta)
-                break; // ✂️ prune
         }
-
-        return bestScore;
-    }
-    else
-    {
-        int bestScore = INT_MAX;
-
-        for (int i = 0; i < legalMoves.count; i++)
+        else
         {
-            Move move = legalMoves.moves[i];
-
-            board.makeMove(move);
-            int score = minimax(board, depth - 1, !isMaximizing, alpha, beta);
-            board.undoMove();
-            
-            bestScore = min(bestScore, score);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestMove = move;
+            }
             beta = min(beta, bestScore);
-
-            if (beta <= alpha)
-                break; 
         }
 
-        return bestScore;
+        if (alpha >= beta)
+            break;
     }
+
+    TTFlag flag;
+    if (bestScore <= alpha)      flag = ALPHA;
+    else if (bestScore >= beta)  flag = BETA;
+    else                         flag = EXACT;
+
+    entry.zobristHash = board.zobristHash;
+    entry.score       = bestScore;
+    entry.depth       = depth;
+    entry.flag        = flag;
+    entry.bestMove    = bestMove;
+
+    return bestScore;
 }
 
 Move GenerateMoves::getBestMove(Board& board, int depth)
