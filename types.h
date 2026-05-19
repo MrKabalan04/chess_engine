@@ -83,6 +83,7 @@ struct TTEntry {
     int depth;
     int score;
     TTFlag flag;
+    uint8_t age;  
 };
 
 

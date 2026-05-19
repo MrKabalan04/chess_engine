@@ -10,13 +10,25 @@ void GenerateMoves::initPawnAttacks()
     {
         uint64_t bit = 1ULL << sq;
 
-        pawnMasks[0][sq] =
+        // attacks FROM a pawn located on sq
+        pawnFromMasks[0][sq] =
             ((bit & ~COLUMN_H) << 9) |
             ((bit & ~COLUMN_A) << 7);
 
-        pawnMasks[1][sq] =
+        pawnFromMasks[1][sq] =
             ((bit & ~COLUMN_A) >> 9) |
             ((bit & ~COLUMN_H) >> 7);
+
+        // attacks TO the square sq by a pawn of given color
+        // white pawns that attack sq are located at sq-7 and sq-9
+        pawnToMasks[0][sq] =
+            ((bit & ~COLUMN_A) >> 7) |
+            ((bit & ~COLUMN_H) >> 9);
+
+        // black pawns that attack sq are located at sq+7 and sq+9
+        pawnToMasks[1][sq] =
+            ((bit & ~COLUMN_H) << 9) |
+            ((bit & ~COLUMN_A) << 7);
     }
 }
 
@@ -47,8 +59,8 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
         }
 
         // 3. Normal Captures
-        // Use precomputed attack masks and intersect with squares occupied by opponent
-        uint64_t attacks = (pawnMasks[0][sq] & opponentPieces);
+        // Use precomputed attack masks (from-square) and intersect with squares occupied by opponent
+        uint64_t attacks = (pawnFromMasks[0][sq] & opponentPieces);
         while (attacks) {
             int targetSq = __builtin_ctzll(attacks);
             // Check if capture results in promotion (pawn was on Row 7)
@@ -66,8 +78,8 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
         // 4. En Passant Capture
         if (enPassantSq != -1) {
             uint64_t epBit = (1ULL << enPassantSq);
-            // If the pawn's attack mask hits the en passant target square
-            if (pawnMasks[0][sq] & epBit) {
+            // If the pawn's attack mask (from-square) hits the en passant target square
+            if (pawnFromMasks[0][sq] & epBit) {
                 list.addMove(Move(sq, enPassantSq, EN_PASSANT));
             }
         }
@@ -95,7 +107,7 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
         }
 
         // 3. Normal Captures
-        uint64_t attacks = (pawnMasks[1][sq] & opponentPieces);
+        uint64_t attacks = (pawnFromMasks[1][sq] & opponentPieces);
         while (attacks) {
             int targetSq = __builtin_ctzll(attacks);
             // Check if capture results in promotion (pawn was on Row 2)
@@ -113,7 +125,7 @@ void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint6
         // 4. En Passant Capture
         if (enPassantSq != -1) {
             uint64_t epBit = (1ULL << enPassantSq);
-            if (pawnMasks[1][sq] & epBit) {
+            if (pawnFromMasks[1][sq] & epBit) {
                 list.addMove(Move(sq, enPassantSq, EN_PASSANT));
             }
         }

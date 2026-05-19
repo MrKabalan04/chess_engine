@@ -17,8 +17,9 @@ public:
     static const uint64_t ROW_2 = 0x000000000000FF00ULL; 
     static const uint64_t ROW_7 = 0x00FF000000000000ULL;   
     static const uint64_t ROW_8 = 0xFF00000000000000ULL;
+    uint8_t searchAge = 0;
    
-    static const int TT_SIZE = 1 << 20;
+    static const int TT_SIZE = 1 << 16;
     static TTEntry transpositionTable[TT_SIZE];
 
     // Precomputed move masks for each piece type and square
@@ -26,7 +27,11 @@ public:
     uint64_t kingMasks[64];
     uint64_t rookMasks[64];
     uint64_t bishopMasks[64];
-    uint64_t pawnMasks[2][64];
+    
+    // pawnFromMasks: attack squares FROM a pawn on [side][sq]
+    // pawnToMasks: attack squares TO a square by a pawn of [side]
+    uint64_t pawnFromMasks[2][64];
+    uint64_t pawnToMasks[2][64];
 
     // Magic bitboards for rook attacks
     uint64_t rookMagics[64];
@@ -81,10 +86,12 @@ public:
     bool isInCheck(const Board& board, int side);
     bool isCheckmate(Board& board, int side);
     bool isStalemate(Board& board, int side);
-    int minimax(Board& board, int depth, bool isMaximizing, int alpha, int beta);
     Move getBestMove(Board& board, int depth);
-    Move searchDepth(Board& board, int depth);
     void orderMoves(MoveList& list, const Board& board);
+
+    int negamax(Board& board, int depth, int alpha, int beta, int ply);
+    int quiescence(Board& board, int alpha, int beta, int depth);
+    void generateCaptures(const Board& board, int side, MoveList& list);
 };
 
 #endif

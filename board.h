@@ -45,6 +45,7 @@ public:
     void printBoard();
     void clearBoard();
     void updateOccupancy();
+    void validateBoard() const;
 
     int evaluate();
     int getPieceAt(int sq) const;

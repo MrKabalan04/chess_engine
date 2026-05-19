@@ -164,8 +164,8 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     if (knightMasks[sq] & knights) return true;
     if (kingMasks[sq] & king) return true;
 
-    // IMPORTANT: pawn attacks MUST be precomputed as "attacks TO sq"
-    if (pawnMasks[attackerColor][sq] & pawns) return true;
+    // IMPORTANT: use precomputed pawn-to-square masks
+    if (pawnToMasks[attackerColor][sq] & pawns) return true;
 
     if (getBishopAttacks(sq, board.occupied) & (bishops | queens)) return true;
     if (getRookAttacks(sq, board.occupied) & (rooks | queens)) return true;
@@ -375,145 +375,47 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
     }
 }
 
-int GenerateMoves::minimax(Board& board, int depth, bool isMaximizing, int alpha, int beta)
-{
-    int index = board.zobristHash % TT_SIZE;
-    TTEntry& entry = transpositionTable[index];
 
-    if (entry.zobristHash == board.zobristHash)
-    {
-        if (entry.depth >= depth)
-        {
-            if (entry.flag == EXACT) return entry.score;
-            if (entry.flag == BETA  && entry.score >= beta)  return entry.score;
-            if (entry.flag == ALPHA && entry.score <= alpha) return entry.score;
-        }
-    }
-
-    if (depth == 0)
-        return board.evaluate();
-
-    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
-
-    if (legalMoves.count == 0)
-    {
-        if (isInCheck(board, board.sideToMove))
-            return isMaximizing ? -100000 : 100000;
-        else
-            return 0;
-    }
-
-    orderMoves(legalMoves, board);
-
-    Move bestMove;
-    int bestScore = isMaximizing ? INT_MIN : INT_MAX;
-
-    for (int i = 0; i < legalMoves.count; i++)
-    {
-        Move move = legalMoves.moves[i];
-
-        board.makeMove(move);
-        int score = minimax(board, depth - 1, !isMaximizing, alpha, beta);
-        board.undoMove();
-
-        if (isMaximizing)
-        {
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestMove = move;
-            }
-            alpha = max(alpha, bestScore);
-        }
-        else
-        {
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestMove = move;
-            }
-            beta = min(beta, bestScore);
-        }
-
-        if (alpha >= beta)
-            break;
-    }
-
-    TTFlag flag;
-    if (bestScore <= alpha)      flag = ALPHA;
-    else if (bestScore >= beta)  flag = BETA;
-    else                         flag = EXACT;
-
-    entry.zobristHash = board.zobristHash;
-    entry.score       = bestScore;
-    entry.depth       = depth;
-    entry.flag        = flag;
-    entry.bestMove    = bestMove;
-
-    return bestScore;
-}
 
 Move GenerateMoves::getBestMove(Board& board, int depth)
 {
-    Move bestMove;
+    memset(transpositionTable, 0, sizeof(transpositionTable));
+    searchAge++;   
+    MoveList moves = generateLegalMoves(board, board.sideToMove);
+    orderMoves(moves, board);
+
+    if (moves.count == 0) return Move();
+
+    Move bestMove = moves.moves[0];
 
     for (int d = 1; d <= depth; d++)
     {
-        bestMove = searchDepth(board, d);
-    }
+        int alpha = INT_MIN + 1;
+        int beta  = INT_MAX;
+        int bestScore = INT_MIN + 1;
+        Move iterationBestMove = moves.moves[0];
 
-    return bestMove;
-}
-
-Move GenerateMoves::searchDepth(Board& board, int depth)
-{
-    Move bestMove;
-
-    bool isWhite = board.sideToMove == 0;
-
-    int bestScore = isWhite ? INT_MIN : INT_MAX;
-
-    MoveList legalMoves =
-        generateLegalMoves(board, board.sideToMove);
-
-    orderMoves(legalMoves, board);
-
-    for (int i = 0; i < legalMoves.count; i++)
-    {
-        Move move = legalMoves.moves[i];
-
-        board.makeMove(move);
-
-        int score = minimax(
-            board,
-            depth - 1,
-            !isWhite,
-            INT_MIN,
-            INT_MAX
-        );
-
-        board.undoMove();
-
-        if (isWhite)
+        for (int i = 0; i < moves.count; i++)
         {
+            board.makeMove(moves.moves[i]);
+            int score = -negamax(board, d - 1, -beta, -alpha, 1);
+            board.undoMove();
+
             if (score > bestScore)
             {
                 bestScore = score;
-                bestMove = move;
+                iterationBestMove = moves.moves[i];
             }
+
+            alpha = max(alpha, score);
         }
-        else
-        {
-            if (score < bestScore)
-            {
-                bestScore = score;
-                bestMove = move;
-            }
-        }
+
+        bestMove = iterationBestMove;
     }
 
     return bestMove;
 }
+
 
 void GenerateMoves::orderMoves(MoveList& list, const Board& board)
 {
@@ -581,5 +483,187 @@ void GenerateMoves::orderMoves(MoveList& list, const Board& board)
 
         scores[j + 1] = keyScore;
         list.moves[j + 1] = keyMove;
+    }
+}
+
+int GenerateMoves::quiescence(Board& board, int alpha, int beta, int depth)
+{
+    // stop if too deep
+    if (depth == 0)
+        return board.evaluate();
+
+    int standPat = board.evaluate();
+
+    if (standPat >= beta)
+        return beta;
+
+    if (standPat > alpha)
+        alpha = standPat;
+
+    MoveList captures;
+    generateCaptures(board, board.sideToMove, captures);
+    orderMoves(captures, board);
+
+    for (int i = 0; i < captures.count; i++)
+    {
+    int side = board.sideToMove;
+    board.makeMove(captures.moves[i]);
+    
+    // filter illegal moves
+    int kingSq = (side == 0) 
+        ? __builtin_ctzll(board.whiteKing) 
+        : __builtin_ctzll(board.blackKing);
+    
+    if (isSquareAttacked(kingSq, side ^ 1, board))
+    {
+        board.undoMove();
+        continue;
+    }
+    
+    int score = -quiescence(board, -beta, -alpha, depth - 1);
+    board.undoMove();
+
+    if (score >= beta) return beta;
+    if (score > alpha) alpha = score;
+}
+
+    return alpha;
+}
+
+int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply)
+{
+    uint64_t hashAtEntry = board.zobristHash;
+
+    int index = hashAtEntry % TT_SIZE;
+    TTEntry& entry = transpositionTable[index];
+
+    // =========================
+    // TT LOOKUP
+    // =========================
+    if (entry.zobristHash == hashAtEntry && entry.depth >= depth)
+    {
+        if (entry.flag == EXACT)
+            return entry.score;
+
+        if (entry.flag == BETA && entry.score >= beta)
+            return beta;
+
+        if (entry.flag == ALPHA && entry.score <= alpha)
+            return alpha;
+    }
+
+    // =========================
+    // LEAF NODE
+    // =========================
+    if (depth == 0)
+        return quiescence(board, alpha, beta, 6);
+
+    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
+
+    // =========================
+    // CHECKMATE / STALEMATE
+    // =========================
+    if (legalMoves.count == 0)
+    {
+        if (isInCheck(board, board.sideToMove))
+            return -100000 + ply;
+
+        return 0;
+    }
+
+    // =========================
+    // MOVE ORDERING
+    // =========================
+    orderMoves(legalMoves, board);
+
+    int originalAlpha = alpha;
+
+    Move bestMove;
+    int bestScore = INT_MIN + 1;
+
+    // =========================
+    // SEARCH MOVES
+    // =========================
+    for (int i = 0; i < legalMoves.count; i++)
+    {
+        Move move = legalMoves.moves[i];
+
+        board.makeMove(move);
+
+        int score;
+
+        // First move = full window
+        if (i == 0)
+        {
+            score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        }
+        else
+        {
+            // PVS narrow window
+            score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
+
+            // Re-search if needed
+            if (score > alpha && score < beta)
+            {
+                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+            }
+        }
+
+        board.undoMove();
+
+        // =========================
+        // BEST SCORE
+        // =========================
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestMove = move;
+        }
+
+        alpha = max(alpha, score);
+
+        // =========================
+        // BETA CUTOFF
+        // =========================
+        if (alpha >= beta)
+            break;
+    }
+
+    // =========================
+    // TT STORE
+    // =========================
+    TTFlag flag;
+
+    if (bestScore <= originalAlpha)
+        flag = ALPHA;
+    else if (bestScore >= beta)
+        flag = BETA;
+    else
+        flag = EXACT;
+
+    entry.zobristHash = hashAtEntry;
+    entry.score       = bestScore;
+    entry.depth       = depth;
+    entry.flag        = flag;
+    entry.bestMove    = bestMove;
+
+    return bestScore;
+}
+
+void GenerateMoves::generateCaptures(const Board& board, int side, MoveList& list)
+{
+    MoveList all;
+    generateAllMoves(board, side, all);  // pseudo-legal only, no board modification
+
+    uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
+
+    for (int i = 0; i < all.count; i++)
+    {
+        Move move = all.moves[i];
+        bool isCapture = (1ULL << move.getTo()) & opponentPieces;
+        bool isEnPassant = move.getType() == EN_PASSANT;
+
+        if (isCapture || isEnPassant)
+            list.addMove(move);
     }
 }

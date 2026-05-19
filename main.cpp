@@ -151,7 +151,8 @@ int main()
             cout << "White to move (e2e4): ";
 
             string moveStr;
-            cin >> moveStr;
+            if (!(cin >> moveStr))
+                break;
 
             if (moveStr.length() != 4)
             {
@@ -190,8 +191,7 @@ int main()
         else
         {
             cout << "Engine thinking...\n";
-            Move bestMove = gen.getBestMove(board, 7);
-
+            Move bestMove = gen.getBestMove(board, 6);
             // =========================
             // SAFETY CHECK (VERY IMPORTANT)
             // =========================

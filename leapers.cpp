@@ -8,16 +8,10 @@ void GenerateMoves::generateKingMoves(int sq, int side, const Board& board, Move
     uint64_t attacks = kingMasks[sq];
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
     uint64_t legalDestinations = attacks & ~friendlyPieces;
-    
-    int opponentColor = side ^ 1;
 
     while (legalDestinations) {
-        int targetSq = __builtin_ctzll(legalDestinations); 
-        
-        if (!isSquareAttacked(targetSq, opponentColor, board)) {
-            list.addMove(Move(sq, targetSq, NORMAL));
-        }
-        
+        int targetSq = __builtin_ctzll(legalDestinations);
+        list.addMove(Move(sq, targetSq, NORMAL));
         legalDestinations &= (legalDestinations - 1);
     }
 }
