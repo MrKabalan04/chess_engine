@@ -898,3 +898,39 @@ void Board::initZobrist()
 
     zobristSideToMove = rng();
 }
+
+void Board::makeNullMove()
+{
+    // Save state onto the undo stack so undoNullMove can restore it perfectly
+    UndoInfo& undo = undoStack[undoCount++];
+    undo.castlingRights = castlingRights;
+    undo.enPassantSquare = enPassantSquare;
+    undo.zobristHash = zobristHash;
+    undo.capturedPiece = -1;
+    undo.movedPiece = -1;
+
+    // Remove the current en passant square from hash if it exists
+    if (enPassantSquare != -1)
+        zobristHash ^= zobristEnPassant[enPassantSquare % 8];
+
+    enPassantSquare = -1; // Clear EP square on a skipped turn
+    
+    // Switch sides and update hash
+    zobristHash ^= zobristSideToMove;
+    sideToMove ^= 1;
+
+    // Track history to avoid desyncs during repetition checks
+    positionHistory[historyCount++] = zobristHash;
+}
+
+void Board::undoNullMove()
+{
+    historyCount--;
+    UndoInfo& info = undoStack[--undoCount];
+
+    // Restore original parameters directly from stack
+    sideToMove ^= 1;
+    castlingRights = info.castlingRights;
+    enPassantSquare = info.enPassantSquare;
+    zobristHash = info.zobristHash;
+}

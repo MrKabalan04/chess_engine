@@ -46,6 +46,8 @@ public:
     void clearBoard();
     void updateOccupancy();
     void validateBoard() const;
+    void makeNullMove();
+    void undoNullMove();
 
     int evaluate();
     int getPieceAt(int sq) const;

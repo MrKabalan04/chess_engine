@@ -549,27 +549,17 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     bool inCheck = isInCheck(board, board.sideToMove);
 
     // ======================================================
-    // 3. NULL MOVE PRUNING (NMP)
+    // 3. NULL MOVE PRUNING (NMP) - STACK SAFE VERSION
     // ======================================================
     if (depth >= 3 && !inCheck && ply > 0)
     {
-        int oldEP = board.enPassantSquare;
-
-        if (oldEP != -1)
-            board.zobristHash ^= board.zobristEnPassant[oldEP % 8];
-
-        board.enPassantSquare = -1;
-        board.sideToMove ^= 1;
-        board.zobristHash ^= board.zobristSideToMove;
+        // Use formal stack method to safely pass the turn and track history
+        board.makeNullMove();
 
         int nullScore = -negamax(board, depth - 3, -beta, -beta + 1, ply + 1);
 
-        board.sideToMove ^= 1;
-        board.zobristHash ^= board.zobristSideToMove;
-        board.enPassantSquare = oldEP;
-
-        if (oldEP != -1)
-            board.zobristHash ^= board.zobristEnPassant[oldEP % 8];
+        // Safely restore the board states perfectly from the undo stack
+        board.undoNullMove();
 
         if (nullScore >= beta)
             return beta;
@@ -593,7 +583,6 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     MoveList pseudoMoves;
     generateAllMoves(board, board.sideToMove, pseudoMoves);
     
-    // Clean, upfront sort that gave you your top benchmarking speeds!
     orderMoves(pseudoMoves, board, ply); 
 
     int originalAlpha = alpha;
@@ -602,11 +591,10 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     int legalMovesSearched = 0;
 
     // ======================================================
-    // 5. SEARCH LOOP
+    // 5. SEARCH LOOP (FIXED PVS + LMR ENGINE)
     // ======================================================
     for (int i = 0; i < pseudoMoves.count; i++)
     {
-        // Cleanly pull the move straight out of the pre-sorted list
         Move move = pseudoMoves.moves[i];
 
         board.makeMove(move);
@@ -625,14 +613,14 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         legalMovesSearched++;
         int score;
 
-        // Principal Variation Search (PVS)
         if (legalMovesSearched == 1)
         {
+            // Search the PV move with full window bounds
             score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
         }
         else
         {
-            // --- LATE MOVE REDUCTION (LMR) ---
+            // Try Late Move Reduction (LMR) on quiet moves down the list
             if (depth >= 3 && !inCheck && legalMovesSearched >= 4 && 
                 (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH))
             {
@@ -641,18 +629,14 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
             }
             else
             {
-                score = alpha + 1; 
+                // For non-reduced moves, run a normal PVS scout search
+                score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
             }
 
-            // --- RE-SEARCH GUARD ---
-            if (score > alpha)
+            // RE-SEARCH GUARD: If late moves score better than alpha, re-evaluate them fully
+            if (score > alpha && score < beta)
             {
-                score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
-
-                if (score > alpha && score < beta)
-                {
-                    score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
-                }
+                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
             }
         }
 
@@ -698,7 +682,6 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     else if (bestScore >= beta)          flag = BETA;
     else                                 flag = EXACT;
 
-    // Depth-Preferred Replacement Strategy
     if (depth > entry.depth || entry.zobristHash != hashAtEntry) 
     {
         entry.zobristHash = hashAtEntry;
