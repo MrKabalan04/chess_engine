@@ -100,6 +100,37 @@ int parseSquare(char file, char rank)
 
     return row * 8 + col;
 }
+
+
+uint64_t runPerft(int depth, Board& board, GenerateMoves& gen)
+{
+    if (depth == 0) return 1ULL;
+
+    MoveList pseudoMoves;
+    // Generate fast, pseudo-legal moves
+    gen.generateAllMoves(board, board.sideToMove, pseudoMoves);
+    uint64_t nodes = 0;
+
+    for (int i = 0; i < pseudoMoves.count; i++)
+    {
+        board.makeMove(pseudoMoves.moves[i]);
+
+        // Find the friendly king's square to check for legality inline
+        // (Remember: sideToMove was already flipped inside makeMove)
+        int kingSq = (board.sideToMove == 1) 
+            ? __builtin_ctzll(board.whiteKing) 
+            : __builtin_ctzll(board.blackKing);
+
+        // If the side who just moved did not leave their king in check, it's legal!
+        if (!gen.isSquareAttacked(kingSq, board.sideToMove, board))
+        {
+            nodes += runPerft(depth - 1, board, gen);
+        }
+
+        board.undoMove();
+    }
+    return nodes;
+}
 // =========================
 // MAIN
 // =========================
@@ -111,6 +142,29 @@ int main()
 
     Board board;
     board.init();
+
+    cout << "=================================\n";
+    cout << "   RUNNING SEARCH ENGINE PERFT   \n";
+    cout << "=================================\n";
+    
+    // Test depths 1 through 7
+    for (int depth = 1; depth <= 5; depth++)
+    {
+        // Capture start time if you want to track speed improvements
+        clock_t start = clock();
+        
+        uint64_t nodes = runPerft(depth, board, gen);
+        
+        clock_t end = clock();
+        double timeTaken = double(end - start) / CLOCKS_PER_SEC;
+
+        cout << "Depth " << depth 
+             << " -> Nodes: " << nodes 
+             << " | Time: " << timeTaken << "s" << endl;
+    }
+    cout << "=================================\n\n";
+
+
 
     while (true)
     {
@@ -191,7 +245,7 @@ int main()
         else
         {
             cout << "Engine thinking...\n";
-            Move bestMove = gen.getBestMove(board, 6);
+            Move bestMove = gen.getBestMove(board, 10);
             // =========================
             // SAFETY CHECK (VERY IMPORTANT)
             // =========================
