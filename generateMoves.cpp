@@ -472,48 +472,53 @@ void GenerateMoves::orderMoves(MoveList& list, const Board& board, int ply) {
 
 int GenerateMoves::quiescence(Board& board, int alpha, int beta, int depth, int ply)
 {
-    // stop if too deep
-    if (depth == 0)
-        return board.evaluate();
+    // 1. STAND PAT: If we stop here, is the current score good enough?
+    int score = board.evaluate();
 
-    int standPat = board.evaluate();
-
-    if (standPat >= beta)
+    if (score >= beta)
         return beta;
+    if (score > alpha)
+        alpha = score;
 
-    if (standPat > alpha)
-        alpha = standPat;
+    // 2. SAFETY GUARD: Stop if we've gone too deep into tactical exchanges
+    if (depth <= 0)
+        return score;
 
-    MoveList captures;
-    generateCaptures(board, board.sideToMove, captures);
+    // 3. GENERATE ONLY CAPTURES
+    MoveList captureMoves;
+    generateCaptures(board, board.sideToMove, captureMoves);
     
-    // --- FIXED: orderMoves now sorts the entire list cleanly upfront ---
-    orderMoves(captures, board, ply);
+    // Sort captures by MVV-LVA (Most Valuable Victim, Least Valuable Aggressor)
+    orderCaptures(captureMoves, board);
 
-    for (int i = 0; i < captures.count; i++)
+    for (int i = 0; i < captureMoves.count; i++)
     {
-        // --- FIXED: Removed inline pick-next loops entirely ---
-        Move move = captures.moves[i];
+        Move move = captureMoves.moves[i];
 
         board.makeMove(move);
-        
-        // --- Reliable Inline Legality Check ---
+
+        // --- INLINE LEGALITY CHECK ---
         int kingSq = (board.sideToMove == 1) 
             ? __builtin_ctzll(board.whiteKing) 
             : __builtin_ctzll(board.blackKing);
-        
-        if (isSquareAttacked(kingSq, board.sideToMove, board))
+
+        if (isSquareAttacked(kingSq, board.sideToMove, board)) 
         {
             board.undoMove();
-            continue; // Illegal capture path, skip it safely
+            continue; 
         }
-        
-        // Pass ply + 1 deep into the recursive tactical tree
-        int score = -quiescence(board, -beta, -alpha, depth - 1, ply + 1);
+
+        // 4. RECURSIVE SEARCH: Search the capture exchange
+        score = -quiescence(board, -beta, -alpha, depth - 1, ply + 1);
+
         board.undoMove();
 
-        if (score >= beta) return beta;
-        if (score > alpha) alpha = score;
+        // 5. ALPHA-BETA PRUNING
+        if (score >= beta)
+            return beta;
+        
+        if (score > alpha)
+            alpha = score;
     }
 
     return alpha;
@@ -549,16 +554,14 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     bool inCheck = isInCheck(board, board.sideToMove);
 
     // ======================================================
-    // 3. NULL MOVE PRUNING (NMP) - STACK SAFE VERSION
+    // 3. NULL MOVE PRUNING (NMP)
     // ======================================================
     if (depth >= 3 && !inCheck && ply > 0)
     {
-        // Use formal stack method to safely pass the turn and track history
         board.makeNullMove();
 
         int nullScore = -negamax(board, depth - 3, -beta, -beta + 1, ply + 1);
 
-        // Safely restore the board states perfectly from the undo stack
         board.undoNullMove();
 
         if (nullScore >= beta)
@@ -591,7 +594,7 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     int legalMovesSearched = 0;
 
     // ======================================================
-    // 5. SEARCH LOOP (FIXED PVS + LMR ENGINE)
+    // 5. SEARCH LOOP (HIGHLY OPTIMIZED RE-SEARCH FILTER)
     // ======================================================
     for (int i = 0; i < pseudoMoves.count; i++)
     {
@@ -629,14 +632,21 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
             }
             else
             {
-                // For non-reduced moves, run a normal PVS scout search
+                // Run a normal PVS scout search with a closed window
                 score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
             }
 
-            // RE-SEARCH GUARD: If late moves score better than alpha, re-evaluate them fully
+            // --- TWO-STEP VERIFICATION RE-SEARCH GUARD ---
             if (score > alpha && score < beta)
             {
-                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+                // Step A: Re-search at full depth, but keep the window narrow first!
+                score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
+
+                // Step B: Only if it genuinely breaks past alpha do we pay for a full window evaluation
+                if (score > alpha)
+                {
+                    score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+                }
             }
         }
 
@@ -692,6 +702,40 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     }
 
     return bestScore;
+}
+
+void GenerateMoves::orderCaptures(MoveList& list, const Board& board) {
+    // Piece values: PAWN=1, KNIGHT=3, BISHOP=3, ROOK=5, QUEEN=9, KING=100
+    static const int pieceValues[] = { 100, 300, 300, 500, 900, 10000 };
+    int scores[256];
+
+    for (int i = 0; i < list.count; i++) {
+        Move move = list.moves[i];
+        
+        int victimType = board.getPieceAt(move.getTo());
+        int attackerType = board.getPieceAt(move.getFrom());
+        
+        // Use values instead of indices
+        int victimVal = (victimType != -1) ? pieceValues[victimType] : 0;
+        int attackerVal = (attackerType != -1) ? pieceValues[attackerType] : 0;
+        
+        // MVV-LVA: High victim value, low attacker value gets highest score
+        scores[i] = (100 * victimVal) - attackerVal;
+    }
+
+    // Sort the list based on scores (simple bubble sort is fine for 5-10 moves)
+    for (int i = 0; i < list.count - 1; i++) {
+    int bestIdx = i;
+    for (int j = i + 1; j < list.count; j++) {
+        if (scores[j] > scores[bestIdx]) {
+            bestIdx = j;
+        }
+    }
+    if (bestIdx != i) {
+        swap(list.moves[i], list.moves[bestIdx]);
+        swap(scores[i], scores[bestIdx]);
+        }
+    }
 }
 
 void GenerateMoves::generateCaptures(const Board& board, int side, MoveList& list)

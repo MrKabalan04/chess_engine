@@ -753,131 +753,57 @@ void Board::undoMove()
 
 int Board::evaluate()
 {
-    int score = 0;
-    uint64_t bb;
+    int mgScore = 0;
+    int egScore = 0;
 
-    // -------------------------
-    // GAME PHASE
-    // -------------------------
-    int phase = 0;
-
-    phase += __builtin_popcountll(whiteQueen | blackQueen) * 4;
-    phase += __builtin_popcountll(whiteRooks | blackRooks) * 2;
-    phase += __builtin_popcountll(whiteBishops | blackBishops);
-    phase += __builtin_popcountll(whiteKnights | blackKnights);
-
-    bool endgame = (phase <= 8);
-
-    // =========================
-    // WHITE
-    // =========================
-
-    bb = whitePawns;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 100 + pawnTable[sq ^ 56];
-        bb &= bb - 1;
-    }
-
-    bb = whiteKnights;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 320 + knightTable[sq ^ 56];
-        bb &= bb - 1;
-    }
-
-    bb = whiteBishops;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 330 + bishopTable[sq ^ 56];
-        bb &= bb - 1;
-    }
-
-    bb = whiteRooks;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 500 + rookTable[sq ^ 56];
-        bb &= bb - 1;
-    }
-
-    bb = whiteQueen;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 900 + queenTable[sq ^ 56];
-        bb &= bb - 1;
-    }
-
-    bb = whiteKing;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score += 10000 + kingTable[sq ^ 56];
-        bb &= bb - 1;
-    }
+    // 1. Calculate Phase (0 = Opening, 256 = Deep Endgame)
+    // We weight pieces to determine how "empty" the board is.
+    int material = __builtin_popcountll(whiteQueen | blackQueen) * 4 +
+                   __builtin_popcountll(whiteRooks | blackRooks) * 2 +
+                   __builtin_popcountll(whiteBishops | blackBishops) * 1 +
+                   __builtin_popcountll(whiteKnights | blackKnights) * 1;
     
-    // =========================
-    // BLACK
-    // =========================
+    int phase = (material * 256) / 12; 
+    if (phase > 256) phase = 256;
 
-    bb = blackPawns;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 100 + pawnTable[sq];
-        bb &= bb - 1;
-    }
+    // 2. Helper Lambda for scoring (keeps code clean)
+    auto scorePiece = [&](uint64_t bb, const int* table, int value, bool isWhite) {
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            int tableSq = isWhite ? (sq ^ 56) : sq;
+            int s = value + table[tableSq];
+            if (isWhite) { mgScore += s; egScore += s; }
+            else { mgScore -= s; egScore -= s; }
+            bb &= bb - 1;
+        }
+    };
 
-    bb = blackKnights;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 320 + knightTable[sq];
-        bb &= bb - 1;
-    }
+    // 3. Evaluate Material + PSTs
+    scorePiece(whitePawns, pawnTable, 100, true);
+    scorePiece(whiteKnights, knightTable, 320, true);
+    scorePiece(whiteBishops, bishopTable, 330, true);
+    scorePiece(whiteRooks, rookTable, 500, true);
+    scorePiece(whiteQueen, queenTable, 900, true);
+    
+    // King is special: use Endgame table when phase is high
+    int whiteKingSq = __builtin_ctzll(whiteKing);
+    mgScore += 10000 + kingTable[whiteKingSq ^ 56];
+    egScore += 10000 + kingEndgameTable[whiteKingSq ^ 56];
 
-    bb = blackBishops;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 330 + bishopTable[sq];
-        bb &= bb - 1;
-    }
+    scorePiece(blackPawns, pawnTable, 100, false);
+    scorePiece(blackKnights, knightTable, 320, false);
+    scorePiece(blackBishops, bishopTable, 330, false);
+    scorePiece(blackRooks, rookTable, 500, false);
+    scorePiece(blackQueen, queenTable, 900, false);
+    
+    int blackKingSq = __builtin_ctzll(blackKing);
+    mgScore -= 10000 + kingTable[blackKingSq];
+    egScore -= 10000 + kingEndgameTable[blackKingSq];
 
-    bb = blackRooks;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 500 + rookTable[sq];
-        bb &= bb - 1;
-    }
+    // 4. The Tapered Blend
+    // This transitions smoothly from MG to EG as phase increases
+    int score = (mgScore * (256 - phase) + egScore * phase) / 256;
 
-    bb = blackQueen;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 900 + queenTable[sq];
-        bb &= bb - 1;
-    }
-
-    bb = blackKing;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-
-        if (endgame)
-            score -= 10000 + kingEndgameTable[sq];
-        else
-            score -= 10000 + kingTable[sq];
-
-        bb &= bb - 1;
-    }
-
-    // IMPORTANT FOR NEGAMAX
     return (sideToMove == 0) ? score : -score;
 }
 

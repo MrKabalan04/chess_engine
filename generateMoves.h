@@ -89,7 +89,8 @@ public:
     bool isStalemate(Board& board, int side);
     Move getBestMove(Board& board, int maxDepth);
     void orderMoves(MoveList& list, const Board& board, int ply);
-
+    void orderCaptures(MoveList& list, const Board& board);
+    
     int negamax(Board& board, int depth, int alpha, int beta, int ply);
     int quiescence(Board& board, int alpha, int beta, int depth, int ply);
     void generateCaptures(const Board& board, int side, MoveList& list);
