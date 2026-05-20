@@ -6,16 +6,6 @@
 
 using namespace std;
 
-static Move debugMoveStack[1024];
-static int debugMoveStackSize = 0;
-
-static string sq(int s)
-{
-    string f = "abcdefgh";
-    string r = "12345678";
-    return string(1, f[s % 8]) + r[s / 8];
-}
-
 // =========================
 // CLEAR BOARD
 // =========================
@@ -76,15 +66,16 @@ void Board::addPiece(int sq, int pieceType, bool isWhite)
     uint64_t bit = (1ULL << sq);
     if (isWhite)
     {
+        assert((whitePieces & bit) == 0ULL);  // ← ADD THIS LINE
         whitePieces |= bit;
         switch (pieceType)
         {
-            case PAWN: whitePawns |= bit; break;
+            case PAWN:   whitePawns   |= bit; break;
             case KNIGHT: whiteKnights |= bit; break;
             case BISHOP: whiteBishops |= bit; break;
-            case ROOK: whiteRooks |= bit; break;
-            case QUEEN: whiteQueen |= bit; break;
-            case KING: whiteKing |= bit; break;
+            case ROOK:   whiteRooks   |= bit; break;
+            case QUEEN:  whiteQueen   |= bit; break;
+            case KING:   whiteKing    |= bit; break;
         }
     }
     else
@@ -93,12 +84,12 @@ void Board::addPiece(int sq, int pieceType, bool isWhite)
         blackPieces |= bit;
         switch (pieceType)
         {
-            case PAWN: blackPawns |= bit; break;
+            case PAWN:   blackPawns   |= bit; break;
             case KNIGHT: blackKnights |= bit; break;
             case BISHOP: blackBishops |= bit; break;
-            case ROOK: blackRooks |= bit; break;
-            case QUEEN: blackQueen |= bit; break;
-            case KING: blackKing |= bit; break;
+            case ROOK:   blackRooks   |= bit; break;
+            case QUEEN:  blackQueen   |= bit; break;
+            case KING:   blackKing    |= bit; break;
         }
     }
     occupied |= bit;
@@ -828,15 +819,7 @@ int Board::evaluate()
         score += 10000 + kingTable[sq ^ 56];
         bb &= bb - 1;
     }
-
-    bb = blackKing;
-    while (bb)
-    {
-        int sq = __builtin_ctzll(bb);
-        score -= 10000 + kingTable[sq];
-        bb &= bb - 1;
-    }
-
+    
     // =========================
     // BLACK
     // =========================

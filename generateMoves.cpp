@@ -379,7 +379,7 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
 
 Move GenerateMoves::getBestMove(Board& board, int depth)
 {
-    memset(transpositionTable, 0, sizeof(transpositionTable));
+    for (int i = 0; i < TT_SIZE; i++) transpositionTable[i] = TTEntry{};
     searchAge++;   
     MoveList moves = generateLegalMoves(board, board.sideToMove);
     orderMoves(moves, board);
