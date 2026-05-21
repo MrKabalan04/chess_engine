@@ -173,6 +173,13 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     return false;
 }
 
+void GenerateMoves::ageHistory() {
+    // Flattened loop for performance
+    for (int i = 0; i < 4096; ++i) {
+        historyTable[i] >>= 1; // Divide by 2
+    }
+}
+
 MoveList GenerateMoves::generateLegalMoves(Board& board, int side)
 {
     MoveList pseudoLegalMoves;
@@ -376,12 +383,12 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
 }
 
 Move GenerateMoves::getBestMove(Board& board, int maxDepth) {
-    Move bestMove;
+    ageHistory();
+    Move bestMove = Move(); // Initialize safely
     MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
     
     if (legalMoves.count == 0) return Move(); 
 
-    // Clear the killer move tracking table to start completely fresh for this turn
     memset(killerMoves, 0, sizeof(killerMoves));
 
     for (int depth = 1; depth <= maxDepth; depth++) {
@@ -389,16 +396,24 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth) {
         int beta  =  1000000;
         int bestScore = -1000000;
 
-        // --- FIXED: Sort the entire legal move list cleanly upfront ---
-        // Distance from root is 0, so we pass 0 for ply
+        // Optimization: Put the best move from the previous iteration at the front
+        // This is a "Poor Man's Transposition Table" for the root node
+        if (bestMove.data != 0) {
+            for (int i = 0; i < legalMoves.count; i++) {
+                if (legalMoves.moves[i].data == bestMove.data) {
+                    swap(legalMoves.moves[i], legalMoves.moves[0]);
+                    break;
+                }
+            }
+        }
+
+        // Order the rest of the list
         orderMoves(legalMoves, board, 0); 
 
-        // --- FIXED: Straightforward, highly optimized linear loop ---
         for (int i = 0; i < legalMoves.count; i++) {
             Move move = legalMoves.moves[i];
             
             board.makeMove(move);
-            // Root ply is 0, so the first negamax branch layer starts at ply 1
             int score = -negamax(board, depth - 1, -beta, -alpha, 1);
             board.undoMove();
 
@@ -410,62 +425,50 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth) {
             alpha = max(alpha, score);
         }
     }
-
     return bestMove;
 }
 
 void GenerateMoves::orderMoves(MoveList& list, const Board& board, int ply) {
-    int scores[256] = {0};
+    int scores[256];
 
     for (int i = 0; i < list.count; i++) {
         Move move = list.moves[i];
         int score = 0;
 
-        // 1. Transposition Table Move
-        uint64_t index = board.zobristHash % TT_SIZE;
+        // Optimized TT Indexing: Use bitwise AND instead of modulo
+        uint64_t index = board.zobristHash & (TT_SIZE - 1);
         if (transpositionTable[index].zobristHash == board.zobristHash && 
             transpositionTable[index].bestMove.data == move.data) {
-            scores[i] = 100000; 
-            continue; 
+            score = 200000;
+        } else {
+            int victim = board.getPieceAt(move.getTo());
+            if (victim != -1) {
+                static const int captureValues[] = { 100, 320, 330, 500, 900, 10000 };
+                score = 100000 + captureValues[victim];
+            } else if (move.data == killerMoves[ply][0].data) {
+                score = 9000;
+            } else if (move.data == killerMoves[ply][1].data) {
+                score = 8000;
+            } else {
+                // Flat history table access: (from << 6) | to
+                score = historyTable[(move.getFrom() << 6) | move.getTo()];
+            }
         }
-
-        int fromSq = move.getFrom();
-        int toSq = move.getTo();
-        uint64_t toBit = (1ULL << toSq);
-        uint64_t fromBit = (1ULL << fromSq);
-
-        // 2. MVV-LVA Captures
-        bool isCapture = false;
-        if (board.sideToMove == 0) { 
-            if (toBit & board.blackQueen)         { score += 90000; isCapture = true; }
-            else if (toBit & board.blackRooks)    { score += 50000; isCapture = true; }
-            else if (toBit & board.blackBishops)  { score += 33000; isCapture = true; }
-            else if (toBit & board.blackKnights)  { score += 32000; isCapture = true; }
-            else if (toBit & board.blackPawns)    { score += 10000; isCapture = true; }
-        } else { 
-            if (toBit & board.whiteQueen)         { score += 90000; isCapture = true; }
-            else if (toBit & board.whiteRooks)    { score += 50000; isCapture = true; }
-            else if (toBit & board.whiteBishops)  { score += 33000; isCapture = true; }
-            else if (toBit & board.whiteKnights)  { score += 32000; isCapture = true; }
-            else if (toBit & board.whitePawns)    { score += 10000; isCapture = true; }
-        }
-
-        // 3. Killer Moves
-        if (!isCapture) {
-            if (move.data == killerMoves[ply][0].data)      score = 9000;
-            else if (move.data == killerMoves[ply][1].data) score = 8000;
-        }
-
         scores[i] = score;
     }
 
-    // Sort everything upfront cleanly
-    for (int i = 0; i < list.count - 1; i++) {
+    // Partial Selection Sort: Only order the top 4 moves
+    int limit = (list.count < 4) ? list.count : 4;
+    for (int i = 0; i < limit; i++) {
+        int bestIdx = i;
         for (int j = i + 1; j < list.count; j++) {
-            if (scores[j] > scores[i]) {
-                swap(scores[i], scores[j]);
-                swap(list.moves[i], list.moves[j]);
+            if (scores[j] > scores[bestIdx]) {
+                bestIdx = j;
             }
+        }
+        if (bestIdx != i) {
+            std::swap(scores[i], scores[bestIdx]);
+            std::swap(list.moves[i], list.moves[bestIdx]);
         }
     }
 }
@@ -664,7 +667,8 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
             if (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH)
             {
                 killerMoves[ply][1] = killerMoves[ply][0]; 
-                killerMoves[ply][0] = move;               
+                killerMoves[ply][0] = move;          
+                historyTable[(move.getFrom() << 6) | move.getTo()] += (depth * depth);
             }
             break; 
         }

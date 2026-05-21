@@ -18,6 +18,8 @@ public:
     static const uint64_t ROW_7 = 0x00FF000000000000ULL;   
     static const uint64_t ROW_8 = 0xFF00000000000000ULL;
     uint8_t searchAge = 0;
+    // History table: [from][to]
+    int historyTable[4096];
    
     static const int TT_SIZE = 1 << 21;
     static TTEntry transpositionTable[TT_SIZE];
@@ -51,6 +53,7 @@ public:
     void init();
     void printBitBoard(uint64_t bitboard);
     void initMagicTables();
+    void ageHistory();
   
     //ROOK
     uint64_t rookMask(int sq);
