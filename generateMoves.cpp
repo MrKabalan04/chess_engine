@@ -563,13 +563,16 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     {
         board.makeNullMove();
 
-        int nullScore = -negamax(board, depth - 3, -beta, -beta + 1, ply + 1);
+    board.positionHistory[board.historyCount++] = board.zobristHash;
 
         board.undoNullMove();
 
-        if (nullScore >= beta)
-            return beta;
-    }
+    if (oldEP != -1)
+        board.zobristHash ^= board.zobristEnPassant[oldEP % 8];
+
+    if (nullScore >= beta)
+        return beta;
+}
     
     // ======================================================
     // 3.5 FUTILITY PRUNING 

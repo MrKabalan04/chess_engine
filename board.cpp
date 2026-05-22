@@ -64,9 +64,11 @@ void Board::addPiece(int sq, int pieceType, bool isWhite)
     assert(pieceType >= PAWN && pieceType <= KING);
 
     uint64_t bit = (1ULL << sq);
+    assert((occupied & bit) == 0ULL); // Safety: square must be vacant
+
     if (isWhite)
     {
-        assert((whitePieces & bit) == 0ULL);  // ← ADD THIS LINE
+        assert((whitePieces & bit) == 0ULL);
         whitePieces |= bit;
         switch (pieceType)
         {
@@ -101,11 +103,11 @@ void Board::removePiece(int sq, int pieceType, bool isWhite)
     assert(pieceType >= PAWN && pieceType <= KING);
 
     uint64_t bit = (1ULL << sq);
+
     if (isWhite)
     {
         assert((whitePieces & bit) != 0ULL);
         whitePieces &= ~bit;
-
         switch (pieceType)
         {
             case PAWN:   whitePawns &= ~bit; break;
@@ -120,7 +122,6 @@ void Board::removePiece(int sq, int pieceType, bool isWhite)
     {
         assert((blackPieces & bit) != 0ULL);
         blackPieces &= ~bit;
-
         switch (pieceType)
         {
             case PAWN:   blackPawns &= ~bit; break;
@@ -132,6 +133,7 @@ void Board::removePiece(int sq, int pieceType, bool isWhite)
         }
     }
 
+    assert((occupied & bit) != 0ULL);
     occupied &= ~bit;
 }
 
@@ -140,75 +142,70 @@ void Board::removePiece(int sq, int pieceType, bool isWhite)
 // =========================
 void Board::init()
 {
-    clearBoard();
-    initZobrist();
-
-    for (int i = 0; i < 8; i++)
-    {
-        whitePawns |= (1ULL << (8 + i));
-        blackPawns |= (1ULL << (48 + i));
-
-        switch (i)
-        {
-            case 0:
-            case 7:
-                whiteRooks |= (1ULL << i);
-                blackRooks |= (1ULL << (56 + i));
-                break;
-
-            case 1:
-            case 6:
-                whiteKnights |= (1ULL << i);
-                blackKnights |= (1ULL << (56 + i));
-                break;
-
-            case 2:
-            case 5:
-                whiteBishops |= (1ULL << i);
-                blackBishops |= (1ULL << (56 + i));
-                break;
-
-            case 3:
-                whiteQueen |= (1ULL << i);
-                blackQueen |= (1ULL << (56 + i));
-                break;
-
-            case 4:
-                whiteKing |= (1ULL << i);
-                blackKing |= (1ULL << (56 + i));
-                break;
-        }
-    }
+    // 1. Wipe out any existing data completely
+    whitePawns = whiteKnights = whiteBishops = whiteRooks = whiteQueen = whiteKing = 0ULL;
+    blackPawns = blackKnights = blackBishops = blackRooks = blackQueen = blackKing = 0ULL;
+    whitePieces = blackPieces = occupied = 0ULL;
 
     sideToMove = 0;
     enPassantSquare = -1;
-    castlingRights = 15;
+    castlingRights = 15; // All 4 castling options active
+    undoCount = 0;
+    historyCount = 0;
 
-    updateOccupancy();
+    // 2. Initialize White Pawns strictly on Rank 2 (Squares 8 to 15)
+    for (int i = 0; i < 8; i++) whitePawns |= (1ULL << (8 + i));
+    
+    // Initialize White Pieces strictly on Rank 1 (Squares 0 to 7)
+    whiteRooks   |= (1ULL << 0) | (1ULL << 7); // a1, h1
+    whiteKnights |= (1ULL << 1) | (1ULL << 6); // b1, g1
+    whiteBishops |= (1ULL << 2) | (1ULL << 5); // c1, f1
+    whiteQueen   |= (1ULL << 3);               // d1
+    whiteKing    |= (1ULL << 4);               // e1
 
-    zobristHash = 0;
-    for (int i = 0; i < 64; i++)
-    {
-        int piece = getPieceAt(i);
-        if (piece == -1) continue;
-        int color = ((whitePieces >> i) & 1ULL) ? 0 : 1;
-        zobristHash ^= zobristTable[piece][color][i];
-    }
+    // 3. Initialize Black Pawns strictly on Rank 7 (Squares 48 to 55)
+    for (int i = 0; i < 8; i++) blackPawns |= (1ULL << (48 + i));
+    
+    // Initialize Black Pieces strictly on Rank 8 (Squares 56 to 63)
+    blackRooks   |= (1ULL << 56) | (1ULL << 63); // a8, h8
+    blackKnights |= (1ULL << 57) | (1ULL << 62); // b8, g8
+    blackBishops |= (1ULL << 58) | (1ULL << 61); // c8, f8
+    blackQueen   |= (1ULL << 59);                // d8
+    blackKing    |= (1ULL << 60);                // e8
 
-    if (sideToMove == 1)
-        zobristHash ^= zobristSideToMove;
+    // 4. Set container masks explicitly
+    whitePieces = whitePawns | whiteKnights | whiteBishops | whiteRooks | whiteQueen | whiteKing;
+    blackPieces = blackPawns | blackKnights | blackBishops | blackRooks | blackQueen | blackKing;
+    occupied = whitePieces | blackPieces;
 
-    if (castlingRights & WHITE_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[0];
-    if (castlingRights & WHITE_CASTLING_QUEENSIDE) zobristHash ^= zobristCastling[1];
-    if (castlingRights & BLACK_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[2];
-    if (castlingRights & BLACK_CASTLING_QUEENSIDE) zobristHash ^= zobristCastling[3];
+    // 5. Build initial Zobrist Hash safely without relying on helper methods
+    initZobrist();
+    zobristHash = 0ULL;
 
-    if (enPassantSquare != -1)
-        zobristHash ^= zobristEnPassant[enPassantSquare % 8];
+    // Hash White pieces
+    for (int i = 8; i <= 15; i++)  zobristHash ^= zobristTable[PAWN][0][i];
+    zobristHash ^= zobristTable[ROOK][0][0];   zobristHash ^= zobristTable[ROOK][0][7];
+    zobristHash ^= zobristTable[KNIGHT][0][1]; zobristHash ^= zobristTable[KNIGHT][0][6];
+    zobristHash ^= zobristTable[BISHOP][0][2]; zobristHash ^= zobristTable[BISHOP][0][5];
+    zobristHash ^= zobristTable[QUEEN][0][3];  zobristHash ^= zobristTable[KING][0][4];
+
+    // Hash Black pieces
+    for (int i = 48; i <= 55; i++) zobristHash ^= zobristTable[PAWN][1][i];
+    zobristHash ^= zobristTable[ROOK][1][56];   zobristHash ^= zobristTable[ROOK][1][63];
+    zobristHash ^= zobristTable[KNIGHT][1][57]; zobristHash ^= zobristTable[KNIGHT][1][62];
+    zobristHash ^= zobristTable[BISHOP][1][58]; zobristHash ^= zobristTable[BISHOP][1][61];
+    zobristHash ^= zobristTable[QUEEN][1][59];  zobristHash ^= zobristTable[KING][1][60];
+
+    // Add environmental flags to hash
+    if (castlingRights & 1) zobristHash ^= zobristCastling[0];
+    if (castlingRights & 2) zobristHash ^= zobristCastling[1];
+    if (castlingRights & 4) zobristHash ^= zobristCastling[2];
+    if (castlingRights & 8) zobristHash ^= zobristCastling[3];
 
     positionHistory[0] = zobristHash;
     historyCount = 1;
 }
+
 
 // =========================
 // OCCUPANCY UPDATE
@@ -230,34 +227,72 @@ void Board::updateOccupancy()
 
 void Board::validateBoard() const
 {
+    // 1. Ensure opposing sides do not share any squares
     assert((whitePieces & blackPieces) == 0ULL && "White and black pieces overlap");
+    
+    // 2. Ensure global occupancy represents exactly both sides combined
     assert(occupied == (whitePieces | blackPieces) && "Occupied board mismatch");
+    
+    // 3. Ensure individual piece sub-types do not bleed into each other
     assert((whitePawns & (whiteKnights | whiteBishops | whiteRooks | whiteQueen | whiteKing)) == 0ULL && "White piece types overlap");
     assert((blackPawns & (blackKnights | blackBishops | blackRooks | blackQueen | blackKing)) == 0ULL && "Black piece types overlap");
+
+    // 🔥 NEW CRITICAL CHECKS: Ensure the side tracking bitboards match the item totals
+    uint64_t calculatedWhite = whitePawns | whiteKnights | whiteBishops | whiteRooks | whiteQueen | whiteKing;
+    uint64_t calculatedBlack = blackPawns | blackKnights | blackBishops | blackRooks | blackQueen | blackKing;
+
+    assert(whitePieces == calculatedWhite && "whitePieces container does not match individual white piece bitboards");
+    assert(blackPieces == calculatedBlack && "blackPieces container does not match individual black piece bitboards");
 }
+
 
 // =========================
 // PIECE QUERY
 // =========================
 int Board::getPieceAt(int sq) const
 {
-    uint64_t bit = 1ULL << sq;
+    uint64_t bit = (1ULL << sq);
 
-    if (whitePawns & bit) return PAWN;
-    if (whiteKnights & bit) return KNIGHT;
-    if (whiteBishops & bit) return BISHOP;
-    if (whiteRooks & bit) return ROOK;
-    if (whiteQueen & bit) return QUEEN;
-    if (whiteKing & bit) return KING;
+    // If the square isn't occupied at all, immediately return -1
+    if ((occupied & bit) == 0ULL) {
+        return -1;
+    }
 
-    if (blackPawns & bit) return PAWN;
-    if (blackKnights & bit) return KNIGHT;
-    if (blackBishops & bit) return BISHOP;
-    if (blackRooks & bit) return ROOK;
-    if (blackQueen & bit) return QUEEN;
-    if (blackKing & bit) return KING;
+    // Check White bitboards
+    if ((whitePieces & bit) != 0ULL) {
+        if ((whitePawns & bit)   != 0ULL) return PAWN;
+        if ((whiteKnights & bit) != 0ULL) return KNIGHT;
+        if ((whiteBishops & bit) != 0ULL) return BISHOP;
+        if ((whiteRooks & bit)   != 0ULL) return ROOK;
+        if ((whiteQueen & bit)   != 0ULL) return QUEEN;
+        if ((whiteKing & bit)    != 0ULL) return KING;
+    }
+    // Check Black bitboards
+    else if ((blackPieces & bit) != 0ULL) {
+        if ((blackPawns & bit)   != 0ULL) return PAWN;
+        if ((blackKnights & bit) != 0ULL) return KNIGHT;
+        if ((blackBishops & bit) != 0ULL) return BISHOP;
+        if ((blackRooks & bit)   != 0ULL) return ROOK;
+        if ((blackQueen & bit)   != 0ULL) return QUEEN;
+        if ((blackKing & bit)    != 0ULL) return KING;
+    }
 
     return -1;
+}
+
+// =========================
+// IS THREEFOLD REPETITION
+// =========================
+
+bool Board::isThreefoldRepetition()
+{
+    int count = 0;
+    for (int i = 0; i < historyCount - 1; i++)
+    {
+        if (positionHistory[i] == zobristHash)
+            count++;
+    }
+    return count >= 2;
 }
 
 // =========================
@@ -286,14 +321,11 @@ void Board::makeMove(Move move)
     bool isPieceWhite = ((whitePieces >> from) & 1ULL) != 0ULL;
     assert(isPieceWhite == (side == 0));
 
-    int pieceType = movingPiece;  // getPieceAt already returns 0-5
-    int color = (side == 0) ? 0 : 1;  // use sideToMove, not movingPiece
+    int pieceType = movingPiece;  
+    int color = (side == 0) ? 0 : 1;
 
     int captured = -1;
 
-    // =========================
-    // HANDLE EN PASSANT CAPTURE SQUARE
-    // =========================
     if (type == EN_PASSANT)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
@@ -304,87 +336,68 @@ void Board::makeMove(Move move)
         captured = getPieceAt(to);
     }
 
-    // =========================
-    // SAVE UNDO INFO
-    // =========================
     UndoInfo& undo = undoStack[undoCount++];
-
     undo.move = move;
     undo.movedPiece = movingPiece;
     undo.capturedPiece = captured;
-
     undo.castlingRights = castlingRights;
     undo.enPassantSquare = enPassantSquare;
     undo.zobristHash = zobristHash;
 
-    // =========================
-    // ZOBRIST: REMOVE FROM SQUARE
-    // =========================
     zobristHash ^= zobristTable[pieceType][color][from];
-
-    // remove moving piece from board
     removePiece(from, pieceType, side == 0);
 
-    // =========================
-    // CASTLING
-    // =========================
+    // ==========================================
+    // CASTLING BRANCH
+    // ==========================================
     if (type == CASTLE)
-{
-    // king move
-    addPiece(to, KING, side == 0);
-    zobristHash ^= zobristTable[KING][color][to];
-
-    if (side == 0)
     {
-        // white
-        if (to == 6)
-        {
-            removePiece(7, ROOK, true);
-            addPiece(5, ROOK, true);
+        addPiece(to, KING, side == 0);
+        zobristHash ^= zobristTable[KING][color][to];
 
-            zobristHash ^= zobristTable[ROOK][0][7];
-            zobristHash ^= zobristTable[ROOK][0][5];
-        }
-        else if (to == 2)
+        if (side == 0) // White
         {
-            removePiece(0, ROOK, true);
-            addPiece(3, ROOK, true);
-
-            zobristHash ^= zobristTable[ROOK][0][0];
-            zobristHash ^= zobristTable[ROOK][0][3];
+            if (to == 6) // Kingside
+            {
+                removePiece(7, ROOK, true); 
+                addPiece(5, ROOK, true);
+                zobristHash ^= zobristTable[ROOK][0][7]; 
+                zobristHash ^= zobristTable[ROOK][0][5]; 
+            }
+            else if (to == 2) // Queenside
+            {
+                removePiece(0, ROOK, true); 
+                addPiece(3, ROOK, true);
+                zobristHash ^= zobristTable[ROOK][0][0]; 
+                zobristHash ^= zobristTable[ROOK][0][3]; 
+            }
         }
-    }
-    else
-    {
-        // black
-        if (to == 62)
+        else // Black
         {
-            removePiece(63, ROOK, false);
-            addPiece(61, ROOK, false);
-
-            zobristHash ^= zobristTable[ROOK][1][63];
-            zobristHash ^= zobristTable[ROOK][1][61];
+            if (to == 62) // Kingside
+            {
+                removePiece(63, ROOK, false); 
+                addPiece(61, ROOK, false);
+                zobristHash ^= zobristTable[ROOK][1][63]; // ✅ Fixed square index
+                zobristHash ^= zobristTable[ROOK][1][61]; // ✅ Fixed square index
+            }
+            else if (to == 58) // Queenside
+            {
+                removePiece(56, ROOK, false); 
+                addPiece(59, ROOK, false);
+                zobristHash ^= zobristTable[ROOK][1][56]; // ✅ Fixed square index
+                zobristHash ^= zobristTable[ROOK][1][59]; // ✅ Fixed square index
+            }
         }
-        else if (to == 58)
-        {
-            removePiece(56, ROOK, false);
-            addPiece(59, ROOK, false);
-
-            zobristHash ^= zobristTable[ROOK][1][56];
-            zobristHash ^= zobristTable[ROOK][1][59];
-        }
+        goto finalize;
     }
 
-    goto finalize;
-}
-
-    // =========================
-    // CAPTURE (NORMAL)
-    // =========================
+    // ==========================================
+    // STANDARD CAPTURE BRANCH
+    // ==========================================
     if (captured != -1 && type != EN_PASSANT)
     {
-        int capType = (captured <= 5) ? captured : (captured - 6);
-
+        int capType = captured; 
         zobristHash ^= zobristTable[capType][opponent][to];
         removePiece(to, capType, opponent == 0);
 
@@ -403,55 +416,49 @@ void Board::makeMove(Move move)
         }
     }
 
-    // =========================
-    // EN PASSANT
-    // =========================
+    // ==========================================
+    // EN PASSANT BRANCH
+    // ==========================================
     if (type == EN_PASSANT)
     {
         int capSq = (side == 0) ? (to - 8) : (to + 8);
-
-        int capPiece = getPieceAt(capSq);
-        if (capPiece != -1)
+        if (captured != -1)
         {
             zobristHash ^= zobristTable[PAWN][opponent][capSq];
             removePiece(capSq, PAWN, opponent == 0);
         }
-
         addPiece(to, PAWN, side == 0);
         zobristHash ^= zobristTable[PAWN][color][to];
-
         goto finalize;
     }
 
-    // =========================
-    // PROMOTION
-    // =========================
+    // ==========================================
+    // PROMOTION BRANCH
+    // ==========================================
     if (type >= PROMOT_QUEEN)
     {
         int newType = QUEEN;
-
         if (type == PROMOT_ROOK)   newType = ROOK;
         if (type == PROMOT_BISHOP) newType = BISHOP;
         if (type == PROMOT_KNIGHT) newType = KNIGHT;
 
         addPiece(to, newType, side == 0);
         zobristHash ^= zobristTable[newType][color][to];
-
         goto finalize;
     }
 
-    // =========================
-    // NORMAL MOVE
-    // =========================
+    // ==========================================
+    // STANDARD MOVE STEP
+    // ==========================================
     addPiece(to, pieceType, side == 0);
     zobristHash ^= zobristTable[pieceType][color][to];
 
 finalize:
 
-    // =========================
+    // ==========================================
     // CASTLING RIGHTS UPDATE
-    // =========================
-    // Remove the old castling rights from the hash before any changes.
+    // ==========================================
+    // ✅ FIXED: Added explicit array indices [0], [1], [2], [3]
     if (castlingRights & WHITE_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[0];
     if (castlingRights & WHITE_CASTLING_QUEENSIDE) zobristHash ^= zobristCastling[1];
     if (castlingRights & BLACK_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[2];
@@ -459,10 +466,8 @@ finalize:
 
     if (pieceType == KING)
     {
-        if (side == 0)
-            castlingRights &= ~(WHITE_CASTLING_KINGSIDE | WHITE_CASTLING_QUEENSIDE);
-        else
-            castlingRights &= ~(BLACK_CASTLING_KINGSIDE | BLACK_CASTLING_QUEENSIDE);
+        if (side == 0) castlingRights &= ~(WHITE_CASTLING_KINGSIDE | WHITE_CASTLING_QUEENSIDE);
+        else           castlingRights &= ~(BLACK_CASTLING_KINGSIDE | BLACK_CASTLING_QUEENSIDE);
     }
     else if (pieceType == ROOK)
     {
@@ -478,36 +483,27 @@ finalize:
         }
     }
 
-    // If a rook capture removes a rook on a home square, update opponent castling rights too.
-    if (captured != -1 && type != EN_PASSANT)
+    if (captured != -1 && type != EN_PASSANT && captured == ROOK)
     {
-        int capType = (captured <= 5) ? captured : (captured - 6);
-        if (capType == ROOK)
+        if (opponent == 0)
         {
-            if (opponent == 0)
-            {
-                if (to == 0) castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
-                if (to == 7) castlingRights &= ~WHITE_CASTLING_KINGSIDE;
-            }
-            else
-            {
-                if (to == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
-                if (to == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
-            }
+            if (to == 0) castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
+            if (to == 7) castlingRights &= ~WHITE_CASTLING_KINGSIDE;
+        }
+        else
+        {
+            if (to == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
+            if (to == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
         }
     }
 
-    // Re-add the current castling rights to the hash.
+    // ✅ FIXED: Re-add with explicit array indices [0], [1], [2], [3]
     if (castlingRights & WHITE_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[0];
     if (castlingRights & WHITE_CASTLING_QUEENSIDE) zobristHash ^= zobristCastling[1];
     if (castlingRights & BLACK_CASTLING_KINGSIDE)  zobristHash ^= zobristCastling[2];
     if (castlingRights & BLACK_CASTLING_QUEENSIDE) zobristHash ^= zobristCastling[3];
 
-    // =========================
-    // EN PASSANT UPDATE (ZOBRIST)
-    // =========================
-    if (enPassantSquare != -1)
-        zobristHash ^= zobristEnPassant[enPassantSquare % 8];
+    if (enPassantSquare != -1) zobristHash ^= zobristEnPassant[enPassantSquare % 8];
 
     if (type == DOUBLE_PUSH)
     {
@@ -519,39 +515,27 @@ finalize:
         enPassantSquare = -1;
     }
 
-    // =========================
-    // SIDE TO MOVE
-    // =========================
     zobristHash ^= zobristSideToMove;
     sideToMove ^= 1;
-
     positionHistory[historyCount++] = zobristHash;
 }
 
-bool Board::isThreefoldRepetition()
-{
-    int count = 0;
-    for (int i = 0; i < historyCount - 1; i++)
-    {
-        if (positionHistory[i] == zobristHash)
-            count++;
-    }
-    return count >= 2;
-}
+// =========================
+// UNDO MOVE
+// =========================
 
 void Board::undoMove()
 {
     if (undoCount == 0) return;
 
     UndoInfo info = undoStack[--undoCount];
-
     Move move = info.move;
 
     int from = move.getFrom();
     int to   = move.getTo();
     int type = move.getType();
 
-    // restore global state
+    // Restore global states safely
     sideToMove ^= 1;
     castlingRights = info.castlingRights;
     enPassantSquare = info.enPassantSquare;
@@ -559,7 +543,6 @@ void Board::undoMove()
 
     int side = sideToMove;
     int opponent = side ^ 1;
-
     int pieceType = info.movedPiece;
 
     // =========================
@@ -583,90 +566,58 @@ void Board::undoMove()
     // CASTLING
     // =========================
     if (type == CASTLE)
-{
-    addPiece(from, KING, side == 0);
-
-    if (side == 0)
     {
-        if (to == 6)
+        removePiece(to, KING, side == 0);
+        addPiece(from, KING, side == 0);
+
+        if (side == 0) // White
         {
-            removePiece(5, ROOK, true);
-            addPiece(7, ROOK, true);
+            if (to == 6) { removePiece(5, ROOK, true); addPiece(7, ROOK, true); }
+            else if (to == 2) { removePiece(3, ROOK, true); addPiece(0, ROOK, true); }
         }
-        else if (to == 2)
+        else // Black
         {
-            removePiece(3, ROOK, true);
-            addPiece(0, ROOK, true);
+            if (to == 62) { removePiece(61, ROOK, false); addPiece(63, ROOK, false); }
+            else if (to == 58) { removePiece(59, ROOK, false); addPiece(56, ROOK, false); }
         }
     }
-    else
-    {
-        if (to == 62)
-        {
-            removePiece(61, ROOK, false);
-            addPiece(63, ROOK, false);
-        }
-        else if (to == 58)
-        {
-            removePiece(59, ROOK, false);
-            addPiece(56, ROOK, false);
-        }
-    }
-}
-
-    // =========================
-    // PROMOTION
-    // =========================
     else if (type >= PROMOT_QUEEN)
     {
+        int promotedType = QUEEN;
+        if (type == PROMOT_ROOK)   promotedType = ROOK;
+        if (type == PROMOT_BISHOP) promotedType = BISHOP;
+        if (type == PROMOT_KNIGHT) promotedType = KNIGHT;
+
+        removePiece(to, promotedType, side == 0);
         addPiece(from, PAWN, side == 0);
 
         if (info.capturedPiece != -1)
         {
-            int capType =
-                (info.capturedPiece <= 5)
-                ? info.capturedPiece
-                : info.capturedPiece - 6;
-
-            addPiece(to, capType, opponent == 0);
+            addPiece(to, info.capturedPiece, opponent == 0);
         }
     }
-
-    // =========================
-    // EN PASSANT
-    // =========================
     else if (type == EN_PASSANT)
     {
+        removePiece(to, PAWN, side == 0);
         addPiece(from, PAWN, side == 0);
 
-        int capSq =
-            (side == 0)
-            ? (to - 8)
-            : (to + 8);
-
+        int capSq = (side == 0) ? (to - 8) : (to + 8);
         addPiece(capSq, PAWN, opponent == 0);
     }
-
-    // =========================
-    // NORMAL MOVE
-    // =========================
-    else
+    else // NORMAL MOVES
     {
+        removePiece(to, pieceType, side == 0);
         addPiece(from, pieceType, side == 0);
 
         if (info.capturedPiece != -1)
         {
-            int capType =
-                (info.capturedPiece <= 5)
-                ? info.capturedPiece
-                : info.capturedPiece - 6;
-
-            addPiece(to, capType, opponent == 0);
+            addPiece(to, info.capturedPiece, opponent == 0);
         }
     }
 
     historyCount--;
 }
+
 
 // =========================
 // EVALUATION
@@ -809,19 +760,34 @@ int Board::evaluate()
 
 void Board::initZobrist()
 {
+    // Use a fixed seed so your transposition table remains reproducible during testing
     std::mt19937_64 rng(123456789);
 
-    uint64_t* ptr = &zobristTable[0][0][0];
+    // ✅ Explicitly initialize the 3D array matching your exact dimensions: [Piece][Color][Square]
+    for (int piece = 0; piece < 6; piece++)
+    {
+        for (int color = 0; color < 2; color++)
+        {
+            for (int sq = 0; sq < 64; sq++)
+            {
+                zobristTable[piece][color][sq] = rng();
+            }
+        }
+    }
 
-    for (int i = 0; i < 2 * 6 * 64; i++)
-        ptr[i] = rng();
-
+    // Initialize Castling Rights (4 indices: 0 to 3)
     for (int i = 0; i < 4; i++)
+    {
         zobristCastling[i] = rng();
+    }
 
+    // Initialize En Passant files (8 indices: 0 to 7)
     for (int i = 0; i < 8; i++)
+    {
         zobristEnPassant[i] = rng();
+    }
 
+    // Initialize side to move flag
     zobristSideToMove = rng();
 }
 

@@ -4,33 +4,57 @@
 #include <cstdint>
 using namespace std;
 
-void GenerateMoves::initPawnAttacks()
+void GenerateMoves::initPawnAttacks() 
 {
-    for (int sq = 0; sq < 64; sq++)
+    // Constant column boundaries to prevent pawn vectors from wrapping horizontally
+    const uint64_t FILE_A = 0x0101010101010101ULL;
+    const uint64_t FILE_H = 0x8080808080808080ULL;
+
+    // Loop through all 64 squares on the grid
+    for (int sq = 0; sq < 64; sq++) 
     {
-        uint64_t bit = 1ULL << sq;
+        // Clear all arrays before writing bits
+        pawnToMasks[0][sq] = 0ULL;
+        pawnToMasks[1][sq] = 0ULL;
+        pawnFromMasks[0][sq] = 0ULL;
+        pawnFromMasks[1][sq] = 0ULL;
 
-        // attacks FROM a pawn located on sq
-        pawnFromMasks[0][sq] =
-            ((bit & ~COLUMN_H) << 9) |
-            ((bit & ~COLUMN_A) << 7);
+        uint64_t bit = (1ULL << sq);
 
-        pawnFromMasks[1][sq] =
-            ((bit & ~COLUMN_A) >> 9) |
-            ((bit & ~COLUMN_H) >> 7);
+        // ====================================================================
+        // 1. POPULATE PAWN-FROM-MASKS (Where a pawn on 'sq' can attack to)
+        // ====================================================================
+        
+        // WHITE PAWN ATTACKS FROM 'sq' (Moving up: sq + 7, sq + 9)
+        if (sq <= 55) {
+            if ((bit & ~FILE_A) != 0ULL) pawnFromMasks[0][sq] |= (1ULL << (sq + 7));
+            if ((bit & ~FILE_H) != 0ULL) pawnFromMasks[0][sq] |= (1ULL << (sq + 9));
+        }
 
-        // attacks TO the square sq by a pawn of given color
-        // white pawns that attack sq are located at sq-7 and sq-9
-        pawnToMasks[0][sq] =
-            ((bit & ~COLUMN_A) >> 7) |
-            ((bit & ~COLUMN_H) >> 9);
+        // BLACK PAWN ATTACKS FROM 'sq' (Moving down: sq - 9, sq - 7)
+        if (sq >= 8) {
+            if ((bit & ~FILE_A) != 0ULL) pawnFromMasks[1][sq] |= (1ULL << (sq - 9));
+            if ((bit & ~FILE_H) != 0ULL) pawnFromMasks[1][sq] |= (1ULL << (sq - 7));
+        }
 
-        // black pawns that attack sq are located at sq+7 and sq+9
-        pawnToMasks[1][sq] =
-            ((bit & ~COLUMN_H) << 9) |
-            ((bit & ~COLUMN_A) << 7);
+        // ====================================================================
+        // 2. POPULATE PAWN-TO-MASKS (Where pawns must stand to attack 'sq')
+        // ====================================================================
+        
+        // WHITE ATTACKERS TARGETING 'sq' (Must stand below: sq - 9, sq - 7)
+        if (sq >= 8) {
+            if ((bit & ~FILE_A) != 0ULL) pawnToMasks[0][sq] |= (1ULL << (sq - 9));
+            if ((bit & ~FILE_H) != 0ULL) pawnToMasks[0][sq] |= (1ULL << (sq - 7));
+        }
+
+        // BLACK ATTACKERS TARGETING 'sq' (Must stand above: sq + 7, sq + 9)
+        if (sq <= 55) {
+            if ((bit & ~FILE_A) != 0ULL) pawnToMasks[1][sq] |= (1ULL << (sq + 7));
+            if ((bit & ~FILE_H) != 0ULL) pawnToMasks[1][sq] |= (1ULL << (sq + 9));
+        }
     }
 }
+
 
 
 void GenerateMoves::generatePawnMoves(int sq, int side, uint64_t occupied, uint64_t opponentPieces, MoveList& list, int enPassantSq) {
