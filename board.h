@@ -46,19 +46,22 @@ public:
     void clearBoard();
     void updateOccupancy();
     void validateBoard() const;
+    void sanityCheck() const;
     void makeNullMove();
     void undoNullMove();
+
+    
 
     int evaluate();
     int getPieceAt(int sq) const;
     void addPiece(int sq, int pieceType, bool isWhite);
     void removePiece(int sq, int pieceType, bool isWhite);
 
-    void makeMove(Move move);
+    void makeMove(const Move& move);
 
     bool isOccupied(int sq) const;
     void initZobrist();
-    bool isThreefoldRepetition();
+    bool isThreefoldRepetition() const;
     void undoMove();
 
     uint64_t zobristTable[6][2][64];  // piece, color, type, square

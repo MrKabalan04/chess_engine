@@ -1,4 +1,5 @@
 #include "generateMoves.h"
+#include <chrono>
 #include <iostream>
 #include <cstring>
 #include <cstdint>
@@ -12,9 +13,6 @@ TTEntry GenerateMoves::transpositionTable[TT_SIZE];
 
 void GenerateMoves::init() {
 
-    // =========================
-    // ROOK MAGIC NUMBERS
-    // =========================
     static const uint64_t rookMagicsLocal[64] = {
         0x8a80104000800020ULL, 0x140002000100040ULL, 0x2801880a0017001ULL, 0x100081001000420ULL,
         0x200020010080420ULL, 0x3001c0002010008ULL, 0x8480008002000100ULL, 0x2080088004402900ULL,
@@ -45,9 +43,6 @@ void GenerateMoves::init() {
         12,11,11,11,11,11,11,12
     };
 
-    // =========================
-    // BISHOP MAGIC NUMBERS
-    // =========================
     static const uint64_t bishopMagicsLocal[64] = {
         0x40040844404084ULL,0x2004208a004208ULL,0x10190041080202ULL,0x108060845042010ULL,
         0x581104180800210ULL,0x2112080446200010ULL,0x1080820820060210ULL,0x3c0808410220200ULL,
@@ -78,73 +73,39 @@ void GenerateMoves::init() {
         6,5,5,5,5,5,5,6
     };
 
-    // =========================
-    // OFFSETS (SAFE + FAST)
-    // =========================
-    static const int knightOffsets[8] = {
-        17,15,10,6,
-       -17,-15,-10,-6
-    };
+    static const int knightOffsets[8] = { 17,15,10,6,-17,-15,-10,-6 };
+    static const int kingOffsets[8]   = { 8,-8,1,-1,9,7,-7,-9 };
 
-    static const int kingOffsets[8] = {
-        8,-8,1,-1,
-        9,7,-7,-9
-    };
+    memset(historyTable, 0, sizeof(historyTable));
+    memset(killerMoves,  0, sizeof(killerMoves));
 
-    // =========================
-    // INIT LOOP
-    // =========================
     for (int i = 0; i < 64; i++) {
-
         int col = i % 8;
 
-        // -------------------------
-        // MAGIC DATA
-        // -------------------------
-        rookMagics[i] = rookMagicsLocal[i];
-        rookShifts[i] = 64 - rookRelevantBits[i];
-
+        rookMagics[i]   = rookMagicsLocal[i];
+        rookShifts[i]   = 64 - rookRelevantBits[i];
         bishopMagics[i] = bishopMagicsLocal[i];
         bishopShifts[i] = 64 - bishopRelevantBits[i];
 
-        // -------------------------
-        // KNIGHT
-        // -------------------------
         uint64_t knightMoves = 0ULL;
-
         for (int k = 0; k < 8; k++) {
             int t = i + knightOffsets[k];
             if (t < 0 || t >= 64) continue;
-
-            int toCol = t % 8;
-            if (abs(toCol - col) > 2) continue;
-
+            if (abs((t % 8) - col) > 2) continue;
             knightMoves |= (1ULL << t);
         }
-
         knightMasks[i] = knightMoves;
 
-        // -------------------------
-        // KING
-        // -------------------------
         uint64_t kingMoves = 0ULL;
-
         for (int k = 0; k < 8; k++) {
             int t = i + kingOffsets[k];
             if (t < 0 || t >= 64) continue;
-
-            int toCol = t % 8;
-            if (abs(toCol - col) > 1) continue;
-
+            if (abs((t % 8) - col) > 1) continue;
             kingMoves |= (1ULL << t);
         }
-
         kingMasks[i] = kingMoves;
 
-        // -------------------------
-        // SLIDERS
-        // -------------------------
-        rookMasks[i] = rookMask(i);
+        rookMasks[i]   = rookMask(i);
         bishopMasks[i] = bishopMask(i);
     }
 
@@ -152,6 +113,9 @@ void GenerateMoves::init() {
     initMagicTables();
 }
 
+// ─────────────────────────────────────────────────────────
+// ATTACK DETECTION
+// ─────────────────────────────────────────────────────────
 bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& board)
 {
     uint64_t pawns   = (attackerColor == 0) ? board.whitePawns   : board.blackPawns;
@@ -161,38 +125,29 @@ bool GenerateMoves::isSquareAttacked(int sq, int attackerColor, const Board& boa
     uint64_t queens  = (attackerColor == 0) ? board.whiteQueen   : board.blackQueen;
     uint64_t king    = (attackerColor == 0) ? board.whiteKing    : board.blackKing;
 
-    if (knightMasks[sq] & knights) return true;
-    if (kingMasks[sq] & king) return true;
-
-    // IMPORTANT: use precomputed pawn-to-square masks
+    if (knightMasks[sq] & knights)  return true;
+    if (kingMasks[sq]   & king)     return true;
     if (pawnToMasks[attackerColor][sq] & pawns) return true;
-
     if (getBishopAttacks(sq, board.occupied) & (bishops | queens)) return true;
-    if (getRookAttacks(sq, board.occupied) & (rooks | queens)) return true;
+    if (getRookAttacks(sq,   board.occupied) & (rooks   | queens)) return true;
 
     return false;
 }
 
-void GenerateMoves::ageHistory() {
-    // Flattened loop for performance
-    for (int i = 0; i < 4096; ++i) {
-        historyTable[i] >>= 1; // Divide by 2
-    }
-}
-
+// ─────────────────────────────────────────────────────────
+// LEGAL MOVE GENERATION
+// ─────────────────────────────────────────────────────────
 MoveList GenerateMoves::generateLegalMoves(Board& board, int side)
 {
-    MoveList pseudoLegalMoves;
-    generateAllMoves(board, side, pseudoLegalMoves);
+    MoveList pseudoLegal;
+    generateAllMoves(board, side, pseudoLegal);
 
-    MoveList legalMoves;
-
+    MoveList legal;
     int opponent = side ^ 1;
 
-    for (int i = 0; i < pseudoLegalMoves.count; i++)
+    for (int i = 0; i < pseudoLegal.count; i++)
     {
-        Move move = pseudoLegalMoves.moves[i];
-
+        Move move = pseudoLegal.moves[i];
         board.makeMove(move);
 
         int kingSq = (side == 0)
@@ -200,565 +155,585 @@ MoveList GenerateMoves::generateLegalMoves(Board& board, int side)
             : __builtin_ctzll(board.blackKing);
 
         if (!isSquareAttacked(kingSq, opponent, board))
-        {
-            legalMoves.addMove(move);
-        }
+            legal.addMove(move);
 
         board.undoMove();
     }
-
-    return legalMoves;
+    return legal;
 }
 
-bool GenerateMoves::isInCheck(const Board& board, int side){
+bool GenerateMoves::isInCheck(const Board& board, int side)
+{
     int kingSq = (side == 0)
         ? __builtin_ctzll(board.whiteKing)
         : __builtin_ctzll(board.blackKing);
-    int opponent = side ^ 1;
-    return isSquareAttacked(kingSq, opponent, board);
+    return isSquareAttacked(kingSq, side ^ 1, board);
 }
 
-bool GenerateMoves::isCheckmate(Board& board, int side){
-    if (!isInCheck(board, side)){
-        return false;
-    }
-    MoveList legalMoves = generateLegalMoves(board, side);
-    return legalMoves.count == 0;
+bool GenerateMoves::isCheckmate(Board& board, int side)
+{
+    return isInCheck(board, side) && generateLegalMoves(board, side).count == 0;
 }
 
-bool GenerateMoves::isStalemate( Board& board, int side){
-    if (isInCheck(board, side)){
-        return false;
-    }
-    MoveList legalMoves = generateLegalMoves(board, side);
-    return legalMoves.count == 0;
+bool GenerateMoves::isStalemate(Board& board, int side)
+{
+    return !isInCheck(board, side) && generateLegalMoves(board, side).count == 0;
 }
 
+// ─────────────────────────────────────────────────────────
+// ALL PSEUDO-LEGAL MOVES
+// ─────────────────────────────────────────────────────────
 void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& list)
 {
+    uint64_t occupied       = board.occupied;
     uint64_t friendlyPieces = (side == 0) ? board.whitePieces : board.blackPieces;
     uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
-    uint64_t occupied = board.occupied;
+    int enPassantSq         = board.enPassantSquare;
 
-    int enemy = side ^ 1;
-
-    // =========================
-    // PAWNS
-    // =========================
-    uint64_t pawns = (side == 0) ? board.whitePawns : board.blackPawns;
-
-    while (pawns)
-    {
-        int sq = __builtin_ctzll(pawns);
-        generatePawnMoves(sq, side, occupied, opponentPieces, list, board.enPassantSquare);
-        pawns &= (pawns - 1);
-    }
-
-    // =========================
-    // KNIGHTS
-    // =========================
-    uint64_t knights = (side == 0) ? board.whiteKnights : board.blackKnights;
-
-    while (knights)
-    {
-        int sq = __builtin_ctzll(knights);
-        generateLeapingMoves(sq, KNIGHT, friendlyPieces, list);
-        knights &= (knights - 1);
-    }
-
-    // =========================
-    // BISHOPS
-    // =========================
-    uint64_t bishops = (side == 0) ? board.whiteBishops : board.blackBishops;
-
-    while (bishops)
-    {
-        int sq = __builtin_ctzll(bishops);
-        generateSlidingMoves(sq, BISHOP, occupied, friendlyPieces, list);
-        bishops &= (bishops - 1);
-    }
-
-    // =========================
-    // ROOKS
-    // =========================
-    uint64_t rooks = (side == 0) ? board.whiteRooks : board.blackRooks;
-
-    while (rooks)
-    {
-        int sq = __builtin_ctzll(rooks);
-        generateSlidingMoves(sq, ROOK, occupied, friendlyPieces, list);
-        rooks &= (rooks - 1);
-    }
-
-    // =========================
-    // QUEENS
-    // =========================
-    uint64_t queens = (side == 0) ? board.whiteQueen : board.blackQueen;
-
-    while (queens)
-    {
-        int sq = __builtin_ctzll(queens);
-        generateSlidingMoves(sq, QUEEN, occupied, friendlyPieces, list);
-        queens &= (queens - 1);
-    }
-
-    // =========================
-    // KING MOVES
-    // =========================
-    int kingSq = (side == 0)
-        ? __builtin_ctzll(board.whiteKing)
-        : __builtin_ctzll(board.blackKing);
-
-    generateKingMoves(kingSq, side, board, list);
-
-    // ======================================================
-    // FAST CASTLING SAFETY CHECK (OPTIMIZED)
-    // ======================================================
-
-    // If king is in check → no castling
-    if (isSquareAttacked(kingSq, enemy, board))
-        return;
-
-    const uint64_t occ = occupied;
-
-    // =========================
-    // WHITE CASTLING
-    // =========================
     if (side == 0)
     {
-        // KING SIDE
-        if (board.castlingRights & WHITE_CASTLING_KINGSIDE)
-        {
-            if (!(occ & ((1ULL << 5) | (1ULL << 6))) &&
-                !isSquareAttacked(4, enemy, board) &&
-                !isSquareAttacked(5, enemy, board) &&
-                !isSquareAttacked(6, enemy, board))
-            {
-                list.addMove(Move(4, 6, CASTLE));
-            }
-        }
-
-        // QUEEN SIDE
-        if (board.castlingRights & WHITE_CASTLING_QUEENSIDE)
-        {
-            if (!(occ & ((1ULL << 1) | (1ULL << 2) | (1ULL << 3))) &&
-                !isSquareAttacked(4, enemy, board) &&
-                !isSquareAttacked(3, enemy, board) &&
-                !isSquareAttacked(2, enemy, board))
-            {
-                list.addMove(Move(4, 2, CASTLE));
-            }
-        }
+        uint64_t bb;
+        bb = board.whitePawns;   while (bb) { int sq = __builtin_ctzll(bb); generatePawnMoves(sq,0,occupied,opponentPieces,list,enPassantSq); bb&=bb-1; }
+        bb = board.whiteKnights; while (bb) { int sq = __builtin_ctzll(bb); generateLeapingMoves(sq,KNIGHT,friendlyPieces,list); bb&=bb-1; }
+        bb = board.whiteBishops; while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,BISHOP,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.whiteRooks;   while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,ROOK,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.whiteQueen;   while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,QUEEN,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.whiteKing;    while (bb) { int sq = __builtin_ctzll(bb); generateKingMoves(sq,0,board,list); bb&=bb-1; }
     }
-
-    // =========================
-    // BLACK CASTLING
-    // =========================
     else
     {
-        // KING SIDE
-        if (board.castlingRights & BLACK_CASTLING_KINGSIDE)
-        {
-            if (!(occ & ((1ULL << 61) | (1ULL << 62))) &&
-                !isSquareAttacked(60, enemy, board) &&
-                !isSquareAttacked(61, enemy, board) &&
-                !isSquareAttacked(62, enemy, board))
-            {
-                list.addMove(Move(60, 62, CASTLE));
-            }
-        }
-
-        // QUEEN SIDE
-        if (board.castlingRights & BLACK_CASTLING_QUEENSIDE)
-        {
-            if (!(occ & ((1ULL << 57) | (1ULL << 58) | (1ULL << 59))) &&
-                !isSquareAttacked(60, enemy, board) &&
-                !isSquareAttacked(59, enemy, board) &&
-                !isSquareAttacked(58, enemy, board))
-            {
-                list.addMove(Move(60, 58, CASTLE));
-            }
-        }
+        uint64_t bb;
+        bb = board.blackPawns;   while (bb) { int sq = __builtin_ctzll(bb); generatePawnMoves(sq,1,occupied,opponentPieces,list,enPassantSq); bb&=bb-1; }
+        bb = board.blackKnights; while (bb) { int sq = __builtin_ctzll(bb); generateLeapingMoves(sq,KNIGHT,friendlyPieces,list); bb&=bb-1; }
+        bb = board.blackBishops; while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,BISHOP,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.blackRooks;   while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,ROOK,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.blackQueen;   while (bb) { int sq = __builtin_ctzll(bb); generateSlidingMoves(sq,QUEEN,occupied,friendlyPieces,list); bb&=bb-1; }
+        bb = board.blackKing;    while (bb) { int sq = __builtin_ctzll(bb); generateKingMoves(sq,1,board,list); bb&=bb-1; }
     }
 }
 
-Move GenerateMoves::getBestMove(Board& board, int maxDepth) {
-    ageHistory();
-    Move bestMove = Move(); // Initialize safely
-    MoveList legalMoves = generateLegalMoves(board, board.sideToMove);
-    
-    if (legalMoves.count == 0) return Move(); 
-
-    memset(killerMoves, 0, sizeof(killerMoves));
-
-    for (int depth = 1; depth <= maxDepth; depth++) {
-        int alpha = -1000000;
-        int beta  =  1000000;
-        int bestScore = -1000000;
-
-        // Optimization: Put the best move from the previous iteration at the front
-        // This is a "Poor Man's Transposition Table" for the root node
-        if (bestMove.data != 0) {
-            for (int i = 0; i < legalMoves.count; i++) {
-                if (legalMoves.moves[i].data == bestMove.data) {
-                    swap(legalMoves.moves[i], legalMoves.moves[0]);
-                    break;
-                }
-            }
-        }
-
-        // Order the rest of the list
-        orderMoves(legalMoves, board, 0); 
-
-        for (int i = 0; i < legalMoves.count; i++) {
-            Move move = legalMoves.moves[i];
-            
-            board.makeMove(move);
-            int score = -negamax(board, depth - 1, -beta, -alpha, 1);
-            board.undoMove();
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestMove = move;
-            }
-            
-            alpha = max(alpha, score);
-        }
-    }
-    return bestMove;
+// ─────────────────────────────────────────────────────────
+// MOVE ORDERING
+// ─────────────────────────────────────────────────────────
+static int mvvLva(const Board& board, const Move& m)
+{
+    static const int val[] = { 100, 300, 310, 500, 900, 20000 };
+    if (m.getType() == EN_PASSANT) return 0;  // PxP
+    int v = board.getPieceAt(m.getTo());
+    int a = board.getPieceAt(m.getFrom());
+    int vv = (v != -1) ? val[v] : 0;
+    int av = (a != -1) ? val[a] : 0;
+    return 10 * vv - av;
 }
 
-void GenerateMoves::orderMoves(MoveList& list, const Board& board, int ply) {
+void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMove)
+{
     int scores[256];
 
-    for (int i = 0; i < list.count; i++) {
-        Move move = list.moves[i];
-        int score = 0;
-
-        // Optimized TT Indexing: Use bitwise AND instead of modulo
-        uint64_t index = board.zobristHash & (TT_SIZE - 1);
-        if (transpositionTable[index].zobristHash == board.zobristHash && 
-            transpositionTable[index].bestMove.data == move.data) {
-            score = 200000;
-        } else {
-            int victim = board.getPieceAt(move.getTo());
-            if (victim != -1) {
-                static const int captureValues[] = { 100, 320, 330, 500, 900, 10000 };
-                score = 100000 + captureValues[victim];
-            } else if (move.data == killerMoves[ply][0].data) {
-                score = 9000;
-            } else if (move.data == killerMoves[ply][1].data) {
-                score = 8000;
-            } else {
-                // Flat history table access: (from << 6) | to
-                score = historyTable[(move.getFrom() << 6) | move.getTo()];
-            }
-        }
-        scores[i] = score;
-    }
-
-    // Partial Selection Sort: Only order the top 4 moves
-    int limit = (list.count < 4) ? list.count : 4;
-    for (int i = 0; i < limit; i++) {
-        int bestIdx = i;
-        for (int j = i + 1; j < list.count; j++) {
-            if (scores[j] > scores[bestIdx]) {
-                bestIdx = j;
-            }
-        }
-        if (bestIdx != i) {
-            std::swap(scores[i], scores[bestIdx]);
-            std::swap(list.moves[i], list.moves[bestIdx]);
-        }
-    }
-}
-
-int GenerateMoves::quiescence(Board& board, int alpha, int beta, int depth, int ply)
-{
-    // 1. STAND PAT: If we stop here, is the current score good enough?
-    int score = board.evaluate();
-
-    if (score >= beta)
-        return beta;
-    if (score > alpha)
-        alpha = score;
-
-    // 2. SAFETY GUARD: Stop if we've gone too deep into tactical exchanges
-    if (depth <= 0)
-        return score;
-
-    // 3. GENERATE ONLY CAPTURES
-    MoveList captureMoves;
-    generateCaptures(board, board.sideToMove, captureMoves);
-    
-    // Sort captures by MVV-LVA (Most Valuable Victim, Least Valuable Aggressor)
-    orderCaptures(captureMoves, board);
-
-    for (int i = 0; i < captureMoves.count; i++)
+    for (int i = 0; i < moves.count; i++)
     {
-        Move move = captureMoves.moves[i];
+        Move m = moves.moves[i];
+        int  s = 0;
 
-        board.makeMove(move);
-
-        // --- INLINE LEGALITY CHECK ---
-        int kingSq = (board.sideToMove == 1) 
-            ? __builtin_ctzll(board.whiteKing) 
-            : __builtin_ctzll(board.blackKing);
-
-        if (isSquareAttacked(kingSq, board.sideToMove, board)) 
+        if (m.data == ttMove.data)
         {
-            board.undoMove();
-            continue; 
+            scores[i] = 10'000'000;
+            continue;
         }
 
-        // 4. RECURSIVE SEARCH: Search the capture exchange
-        score = -quiescence(board, -beta, -alpha, depth - 1, ply + 1);
+        bool isCapture = ((board.occupied >> m.getTo()) & 1ULL) != 0;
+        bool isEP      = m.getType() == EN_PASSANT;
 
-        board.undoMove();
-
-        // 5. ALPHA-BETA PRUNING
-        if (score >= beta)
-            return beta;
-        
-        if (score > alpha)
-            alpha = score;
-    }
-
-    return alpha;
-}
-
-int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply)
-{
-    uint64_t hashAtEntry = board.zobristHash;
-    int index = hashAtEntry % TT_SIZE;
-    TTEntry& entry = transpositionTable[index];
-
-    // ======================================================
-    // 1. TRANSPOSITION TABLE LOOKUP
-    // ======================================================
-    if (entry.zobristHash == hashAtEntry && entry.depth >= depth)
-    {
-        if (entry.flag == EXACT)
-            return entry.score;
-
-        if (entry.flag == BETA && entry.score >= beta)
-            return beta;
-
-        if (entry.flag == ALPHA && entry.score <= alpha)
-            return alpha;
-    }
-
-    // ======================================================
-    // 2. LEAF NODE (QUIESCENCE SEARCH)
-    // ======================================================
-    if (depth == 0)
-        return quiescence(board, alpha, beta, 6, ply);
-
-    bool inCheck = isInCheck(board, board.sideToMove);
-
-    // ======================================================
-    // 3. NULL MOVE PRUNING (NMP)
-    // ======================================================
-    if (depth >= 3 && !inCheck && ply > 0)
-    {
-        board.makeNullMove();
-
-    board.positionHistory[board.historyCount++] = board.zobristHash;
-
-        board.undoNullMove();
-
-    if (oldEP != -1)
-        board.zobristHash ^= board.zobristEnPassant[oldEP % 8];
-
-    if (nullScore >= beta)
-        return beta;
-}
-    
-    // ======================================================
-    // 3.5 FUTILITY PRUNING 
-    // ======================================================
-    if (depth <= 2 && !inCheck && ply > 0)
-    {
-        int baseEval = board.evaluate();
-        if (baseEval + 5000 <= alpha)
+        if (isCapture || isEP)
         {
-            return quiescence(board, alpha, beta, 6, ply); 
+            s = 1'000'000 + mvvLva(board, m);
         }
-    }
-    
-    // ======================================================
-    // 4. GENERATE & SORT PSEUDO-LEGAL MOVES 
-    // ======================================================
-    MoveList pseudoMoves;
-    generateAllMoves(board, board.sideToMove, pseudoMoves);
-    
-    orderMoves(pseudoMoves, board, ply); 
-
-    int originalAlpha = alpha;
-    Move bestMove;
-    int bestScore = INT_MIN + 1;
-    int legalMovesSearched = 0;
-
-    // ======================================================
-    // 5. SEARCH LOOP (HIGHLY OPTIMIZED RE-SEARCH FILTER)
-    // ======================================================
-    for (int i = 0; i < pseudoMoves.count; i++)
-    {
-        Move move = pseudoMoves.moves[i];
-
-        board.makeMove(move);
-
-        // --- INLINE LEGALITY CHECK ---
-        int kingSq = (board.sideToMove == 1) 
-            ? __builtin_ctzll(board.whiteKing) 
-            : __builtin_ctzll(board.blackKing);
-
-        if (isSquareAttacked(kingSq, board.sideToMove, board)) 
+        else if (m.getType() >= PROMOT_QUEEN)
         {
-            board.undoMove();
-            continue; 
+            s = 900'000 + (m.getType() == PROMOT_QUEEN ? 900 : 300);
         }
-
-        legalMovesSearched++;
-        int score;
-
-        if (legalMovesSearched == 1)
+        else if (ply < 32 && m.data == killerMoves[ply][0].data)
         {
-            // Search the PV move with full window bounds
-            score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+            s = 800'000;
+        }
+        else if (ply < 32 && m.data == killerMoves[ply][1].data)
+        {
+            s = 799'000;
         }
         else
         {
-            // Try Late Move Reduction (LMR) on quiet moves down the list
-            if (depth >= 3 && !inCheck && legalMovesSearched >= 4 && 
-                (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH))
-            {
-                int reduction = 1; 
-                score = -negamax(board, depth - 1 - reduction, -alpha - 1, -alpha, ply + 1);
-            }
-            else
-            {
-                // Run a normal PVS scout search with a closed window
-                score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
-            }
-
-            // --- TWO-STEP VERIFICATION RE-SEARCH GUARD ---
-            if (score > alpha && score < beta)
-            {
-                // Step A: Re-search at full depth, but keep the window narrow first!
-                score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
-
-                // Step B: Only if it genuinely breaks past alpha do we pay for a full window evaluation
-                if (score > alpha)
-                {
-                    score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
-                }
-            }
+            int hIdx = m.getFrom() * 64 + m.getTo();
+            s = historyTable[hIdx];
         }
 
-        board.undoMove();
-
-        if (score > bestScore)
-        {
-            bestScore = score;
-            bestMove = move;
-        }
-
-        // --- BETA CUTOFF & KILLER MOVE REGISTRATION ---
-        if (score >= beta)
-        {
-            if (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH)
-            {
-                killerMoves[ply][1] = killerMoves[ply][0]; 
-                killerMoves[ply][0] = move;          
-                historyTable[(move.getFrom() << 6) | move.getTo()] += (depth * depth);
-            }
-            break; 
-        }
-
-        alpha = max(alpha, score);
+        scores[i] = s;
     }
 
-    // ======================================================
-    // 6. TERMINAL STATE DETECTION
-    // ======================================================
-    if (legalMovesSearched == 0)
+    // Insertion sort — O(n²) but fine for ≤256 moves
+    for (int i = 1; i < moves.count; i++)
     {
-        if (inCheck)
-            return -100000 + ply; 
-
-        return 0; 
+        Move m = moves.moves[i];
+        int  s = scores[i];
+        int  j = i - 1;
+        while (j >= 0 && scores[j] < s)
+        {
+            moves.moves[j+1] = moves.moves[j];
+            scores[j+1]      = scores[j];
+            j--;
+        }
+        moves.moves[j+1] = m;
+        scores[j+1]      = s;
     }
-
-    // ======================================================
-    // 7. STORE RESULT IN TRANSPOSITION TABLE
-    // ======================================================
-    TTFlag flag;
-
-    if (bestScore <= originalAlpha)      flag = ALPHA;
-    else if (bestScore >= beta)          flag = BETA;
-    else                                 flag = EXACT;
-
-    if (depth > entry.depth || entry.zobristHash != hashAtEntry) 
-    {
-        entry.zobristHash = hashAtEntry;
-        entry.score       = bestScore;
-        entry.depth       = depth;
-        entry.flag        = flag;
-        entry.bestMove    = bestMove;
-    }
-
-    return bestScore;
 }
 
-void GenerateMoves::orderCaptures(MoveList& list, const Board& board) {
-    // Piece values: PAWN=1, KNIGHT=3, BISHOP=3, ROOK=5, QUEEN=9, KING=100
-    static const int pieceValues[] = { 100, 300, 300, 500, 900, 10000 };
+void GenerateMoves::orderCaptures(MoveList& list, const Board& board)
+{
+    static const int val[] = { 100, 300, 310, 500, 900, 20000 };
     int scores[256];
 
-    for (int i = 0; i < list.count; i++) {
-        Move move = list.moves[i];
-        
-        int victimType = board.getPieceAt(move.getTo());
-        int attackerType = board.getPieceAt(move.getFrom());
-        
-        // Use values instead of indices
-        int victimVal = (victimType != -1) ? pieceValues[victimType] : 0;
-        int attackerVal = (attackerType != -1) ? pieceValues[attackerType] : 0;
-        
-        // MVV-LVA: High victim value, low attacker value gets highest score
-        scores[i] = (100 * victimVal) - attackerVal;
+    for (int i = 0; i < list.count; i++)
+    {
+        Move m = list.moves[i];
+        int v = board.getPieceAt(m.getTo());
+        int a = board.getPieceAt(m.getFrom());
+        scores[i] = 10 * ((v!=-1)?val[v]:0) - ((a!=-1)?val[a]:0);
     }
 
-    // Sort the list based on scores (simple bubble sort is fine for 5-10 moves)
-    for (int i = 0; i < list.count - 1; i++) {
-    int bestIdx = i;
-    for (int j = i + 1; j < list.count; j++) {
-        if (scores[j] > scores[bestIdx]) {
-            bestIdx = j;
+    for (int i = 1; i < list.count; i++)
+    {
+        Move m = list.moves[i];
+        int  s = scores[i];
+        int  j = i - 1;
+        while (j >= 0 && scores[j] < s)
+        {
+            list.moves[j+1] = list.moves[j];
+            scores[j+1]     = scores[j];
+            j--;
         }
-    }
-    if (bestIdx != i) {
-        swap(list.moves[i], list.moves[bestIdx]);
-        swap(scores[i], scores[bestIdx]);
-        }
+        list.moves[j+1] = m;
+        scores[j+1]     = s;
     }
 }
 
+void GenerateMoves::ageHistory()
+{
+    for (int i = 0; i < 4096; ++i)
+        historyTable[i] >>= 2;   // divide by 4 (faster decay than /2)
+}
+
+// ─────────────────────────────────────────────────────────
+// CAPTURE GENERATION
+// ─────────────────────────────────────────────────────────
 void GenerateMoves::generateCaptures(const Board& board, int side, MoveList& list)
 {
     MoveList all;
-    generateAllMoves(board, side, all);  // pseudo-legal only, no board modification
+    generateAllMoves(board, side, all);
 
     uint64_t opponentPieces = (side == 0) ? board.blackPieces : board.whitePieces;
 
     for (int i = 0; i < all.count; i++)
     {
         Move move = all.moves[i];
-        bool isCapture = (1ULL << move.getTo()) & opponentPieces;
+        bool isCapture   = (1ULL << move.getTo()) & opponentPieces;
         bool isEnPassant = move.getType() == EN_PASSANT;
-
-        if (isCapture || isEnPassant)
+        bool isPromotion = move.getType() >= PROMOT_QUEEN;
+        if (isCapture || isEnPassant || isPromotion)
             list.addMove(move);
     }
+}
+
+// ─────────────────────────────────────────────────────────
+// QUIESCENCE SEARCH
+// ─────────────────────────────────────────────────────────
+int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
+{
+    nodesSearched++;
+
+    // Check time every 1024 nodes
+    if ((nodesSearched & 1023) == 0)
+        checkTimeBudget();
+
+    if (searchAborted)
+        return 0;
+
+    if (board.isThreefoldRepetition())
+        return 0;
+
+    int standPat = board.evaluate();
+    if (standPat >= beta) return beta;
+    if (standPat > alpha) alpha = standPat;
+
+    // Delta pruning: skip if even capturing the best possible piece can't raise alpha
+    const int DELTA = 975;  // queen value
+    if (standPat + DELTA < alpha) return alpha;
+
+    MoveList captures;
+    generateCaptures(board, board.sideToMove, captures);
+    orderCaptures(captures, board);
+
+    int side     = board.sideToMove;
+    int opponent = side ^ 1;
+
+    for (int i = 0; i < captures.count; i++)
+    {
+        Move move = captures.moves[i];
+
+        board.makeMove(move);
+
+        int kingSq = (side == 0)
+            ? __builtin_ctzll(board.whiteKing)
+            : __builtin_ctzll(board.blackKing);
+
+        if (isSquareAttacked(kingSq, opponent, board))
+        {
+            board.undoMove();
+            continue;
+        }
+
+        int score = -quiescence(board, -beta, -alpha, ply + 1);
+        board.undoMove();
+
+        if (searchAborted) return 0;
+
+        if (score >= beta) return beta;
+        if (score > alpha) alpha = score;
+    }
+
+    return alpha;
+}
+
+// ─────────────────────────────────────────────────────────
+// NEGAMAX WITH ALPHA-BETA
+// ─────────────────────────────────────────────────────────
+int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply)
+{
+    nodesSearched++;
+
+    if ((nodesSearched & 1023) == 0)
+        checkTimeBudget();
+
+    if (searchAborted)
+        return 0;
+
+    // Draw detection
+    if (ply > 0 && board.isThreefoldRepetition())
+        return 0;
+
+    int originalAlpha = alpha;
+
+    // ── TT Probe ──────────────────────────────────────────
+    int ttIndex = board.zobristHash % TT_SIZE;
+    TTEntry& ttEntry = transpositionTable[ttIndex];
+    Move ttMove(0, 0, NORMAL);
+
+    if (ttEntry.zobristHash == board.zobristHash)
+    {
+        ttMove = ttEntry.bestMove;
+
+        if (ttEntry.depth >= depth)
+        {
+            int s = ttEntry.score;
+
+            // Adjust mate scores for current ply
+            if (s >  90000) s -= ply;
+            if (s < -90000) s += ply;
+
+            if (ttEntry.flag == EXACT)               return s;
+            if (ttEntry.flag == ALPHA && s <= alpha) return alpha;
+            if (ttEntry.flag == BETA  && s >= beta)  return beta;
+        }
+    }
+
+    if (depth <= 0)
+        return quiescence(board, alpha, beta, ply);
+
+    // ── Check extension ───────────────────────────────────
+    bool inCheck = isInCheck(board, board.sideToMove);
+    if (inCheck) depth++;   // extend by 1 when in check
+
+    // ── Null Move Pruning ──────────────────────────────────
+    if (!inCheck && depth >= 3 && ply > 0)
+    {
+        int bigPieces = __builtin_popcountll(
+            (board.sideToMove == 0)
+            ? (board.whiteKnights | board.whiteBishops | board.whiteRooks | board.whiteQueen)
+            : (board.blackKnights | board.blackBishops | board.blackRooks | board.blackQueen));
+
+        if (bigPieces >= 1)
+        {
+            int R = (depth >= 6) ? 3 : 2;
+            board.makeNullMove();
+            int nullScore = -negamax(board, depth - 1 - R, -beta, -beta + 1, ply + 1);
+            board.undoNullMove();
+
+            if (!searchAborted && nullScore >= beta)
+                return beta;
+        }
+    }
+
+    // ── Move generation ───────────────────────────────────
+    MoveList moves;
+    generateAllMoves(board, board.sideToMove, moves);
+    orderMoves(moves, board, ply, ttMove);
+
+    int  bestScore  = -9999999;
+    Move bestMove(0, 0, NORMAL);
+    int  legalCount = 0;
+    int  side       = board.sideToMove;
+    int  opponent   = side ^ 1;
+
+    for (int i = 0; i < moves.count; i++)
+    {
+        Move move = moves.moves[i];
+
+        board.makeMove(move);
+
+        // Skip illegal moves (king left in check)
+        int kingSq = (side == 0)
+            ? __builtin_ctzll(board.whiteKing)
+            : __builtin_ctzll(board.blackKing);
+
+        if (isSquareAttacked(kingSq, opponent, board))
+        {
+            board.undoMove();
+            continue;
+        }
+
+        legalCount++;
+
+        // ── Late Move Reductions (LMR) ─────────────────────
+        int score;
+        bool isCapture = (board.getPieceAt(move.getTo()) != -1) ||
+                         (move.getType() == EN_PASSANT);
+        // Note: after makeMove, side flipped, so we check the moving side's king, but
+        // the capture flag is about the destination which is already set.
+        // Re-check: isCapture should look at what was there before the move.
+        // Use the occupied BB before the move — captured piece is now gone.
+        // Simple heuristic: if material changed (captured piece removed), it's a capture.
+        // We'll use a simpler check: type-based + the now-missing piece.
+        bool isQuiet = (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH);
+
+        if (!inCheck && depth >= 3 && legalCount > 3 && isQuiet)
+        {
+            // Reduced search
+            int R = 1 + (legalCount > 6 ? 1 : 0);
+            score = -negamax(board, depth - 1 - R, -alpha - 1, -alpha, ply + 1);
+
+            // If it beats alpha, re-search at full depth
+            if (score > alpha)
+                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        }
+        else
+        {
+            score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        }
+
+        board.undoMove();
+
+        if (searchAborted) return 0;
+
+        if (score > bestScore)
+        {
+            bestScore = score;
+            bestMove  = move;
+        }
+
+        if (score > alpha)
+        {
+            alpha = score;
+
+            // History heuristic: only quiet moves that raise alpha
+            if (isQuiet)
+            {
+                int hIdx = move.getFrom() * 64 + move.getTo();
+                historyTable[hIdx] += depth * depth;
+                // Cap to avoid overflow
+                if (historyTable[hIdx] > 1'000'000)
+                    historyTable[hIdx] = 1'000'000;
+            }
+        }
+
+        if (alpha >= beta)
+        {
+            // Killer move: only quiet moves
+            if (isQuiet && ply < 32)
+            {
+                if (killerMoves[ply][0].data != move.data)
+                {
+                    killerMoves[ply][1] = killerMoves[ply][0];
+                    killerMoves[ply][0] = move;
+                }
+            }
+            break;  // Beta cutoff
+        }
+    }
+
+    // No legal moves = checkmate or stalemate
+    if (legalCount == 0)
+    {
+        if (inCheck) return -99000 + ply;
+        else         return 0;
+    }
+
+    // ── TT Store ──────────────────────────────────────────
+    if (!searchAborted)
+    {
+        TTFlag flag = EXACT;
+        if (bestScore <= originalAlpha) flag = ALPHA;
+        else if (bestScore >= beta)     flag = BETA;
+
+        ttEntry.zobristHash = board.zobristHash;
+        ttEntry.score       = bestScore;
+        ttEntry.depth       = depth;
+        ttEntry.flag        = flag;
+        ttEntry.bestMove    = bestMove;
+    }
+
+    return bestScore;
+}
+
+// ─────────────────────────────────────────────────────────
+// ITERATIVE DEEPENING ROOT
+// ─────────────────────────────────────────────────────────
+Move GenerateMoves::getBestMove(Board& board, int maxDepth,
+                                 long long myTimeLeftMs,
+                                 long long incrementMs, int movesToGo)
+{
+    if (myTimeLeftMs <= 0) myTimeLeftMs = 5000;
+    if (movesToGo    <= 0) movesToGo    = 40;
+
+    // Sensible time allocation
+    // Use roughly 1/(movesToGo) of remaining time, plus 75% of increment
+    timeLimitMs = (myTimeLeftMs / (movesToGo + 5)) + (long long)(incrementMs * 0.75);
+
+    // Hard caps
+    if (timeLimitMs > 8000)                              timeLimitMs = 8000;
+    if (timeLimitMs > (long long)(myTimeLeftMs * 0.75))  timeLimitMs = (long long)(myTimeLeftMs * 0.75);
+    if (timeLimitMs < 20)                                timeLimitMs = 20;
+
+    searchStartTime = std::chrono::high_resolution_clock::now();
+    searchAborted   = false;
+    nodesSearched   = 0;
+
+    memset(killerMoves, 0, sizeof(killerMoves));
+    ageHistory();
+
+    MoveList legalRootMoves = generateLegalMoves(board, board.sideToMove);
+
+    Move absoluteBestMove;
+    if (legalRootMoves.count == 0) return absoluteBestMove;
+    absoluteBestMove = legalRootMoves.moves[0];
+
+    // Seed TT move ordering
+    {
+        Move ttMove;
+        int idx = board.zobristHash % TT_SIZE;
+        if (transpositionTable[idx].zobristHash == board.zobristHash)
+            ttMove = transpositionTable[idx].bestMove;
+        orderMoves(legalRootMoves, board, 0, ttMove);
+    }
+
+    int prevScore = 0;
+
+    // ── Iterative Deepening ──────────────────────────────
+    for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++)
+    {
+        // ── Aspiration Windows ────────────────────────────
+        int delta  = 50;
+        int alpha  = (currentDepth >= 4) ? prevScore - delta : -999999;
+        int beta   = (currentDepth >= 4) ? prevScore + delta :  999999;
+
+        Move  bestMoveThisDepth  = absoluteBestMove;
+        int   bestScoreThisDepth = -999999;
+
+        while (true)
+        {
+            bestScoreThisDepth = -999999;
+            bestMoveThisDepth  = absoluteBestMove;
+            int localAlpha     = alpha;
+
+            for (int i = 0; i < legalRootMoves.count; i++)
+            {
+                Move move = legalRootMoves.moves[i];
+                board.makeMove(move);
+
+                int score = -negamax(board, currentDepth - 1, -beta, -localAlpha, 1);
+                board.undoMove();
+
+                checkTimeBudget();
+                if (searchAborted) goto done;
+
+                if (score > bestScoreThisDepth)
+                {
+                    bestScoreThisDepth = score;
+                    bestMoveThisDepth  = move;
+                }
+
+                if (score > localAlpha)
+                    localAlpha = score;
+
+                if (localAlpha >= beta) break;
+            }
+
+            if (searchAborted) goto done;
+
+            // Check aspiration window result
+            if (bestScoreThisDepth <= alpha)
+            {
+                alpha -= delta;
+                delta *= 2;
+                if (alpha < -999999) alpha = -999999;
+            }
+            else if (bestScoreThisDepth >= beta)
+            {
+                beta  += delta;
+                delta *= 2;
+                if (beta > 999999) beta = 999999;
+            }
+            else
+            {
+                break;  // Score is within window — done
+            }
+
+            // If window is fully open, don't loop again
+            if (alpha <= -999999 && beta >= 999999) break;
+        }
+
+        absoluteBestMove = bestMoveThisDepth;
+        prevScore        = bestScoreThisDepth;
+
+        // Update TT at root
+        {
+            int idx = board.zobristHash % TT_SIZE;
+            transpositionTable[idx].zobristHash = board.zobristHash;
+            transpositionTable[idx].score       = bestScoreThisDepth;
+            transpositionTable[idx].depth       = currentDepth;
+            transpositionTable[idx].flag        = EXACT;
+            transpositionTable[idx].bestMove    = bestMoveThisDepth;
+        }
+
+        // Re-order root moves: best move first
+        orderMoves(legalRootMoves, board, 0, bestMoveThisDepth);
+
+        auto now     = std::chrono::high_resolution_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStartTime).count();
+        if (elapsed == 0) elapsed = 1;
+
+        std::cout << "info depth " << currentDepth
+                  << " score cp "  << bestScoreThisDepth
+                  << " time "      << elapsed
+                  << " nodes "     << nodesSearched
+                  << " nps "       << (nodesSearched * 1000 / elapsed)
+                  << std::endl;
+
+        if (legalRootMoves.count == 1) break;
+
+        // Time check: if we've used more than 60% of budget, don't start next depth
+        auto elapsedNow = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - searchStartTime).count();
+        if (elapsedNow >= timeLimitMs * 6 / 10) break;
+    }
+
+    done:
+    return absoluteBestMove;
 }

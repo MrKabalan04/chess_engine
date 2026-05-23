@@ -1,9 +1,0 @@
-# Ignore the compiled executable
-chess_engine.exe
-*.exe
-
-# Optional: Ignore VS Code settings or build folders
-.vscode/
-build/
-bin/
-obj/

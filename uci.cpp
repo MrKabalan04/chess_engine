@@ -1,57 +1,152 @@
 #include "uci.h"
-#include "types.h"
-#include <string>
+#include <algorithm>
+#include <iostream>
+#include <sstream>
+#include <vector>
 
-std::string moveToString(Move m) {
-    std::string f = "abcdefgh";
-    std::string r = "12345678";
-    int from = m.getFrom();
-    int to   = m.getTo();
+using namespace std;
 
-    if (from < 0 || from > 63 || to < 0 || to > 63 || from == to) return "0000";
+// Forward declarations of helpers defined in main.cpp to prevent linker errors
+int parseSquare(char file, char rank);
+string sq(int s);
 
-    std::string s;
-    s += f[from % 8];
-    s += r[from / 8];
-    s += f[to % 8];
-    s += r[to / 8];
+// Main input command monitoring framework loop
+void UCI::uciLoop(Board &board, GenerateMoves &gen) {
+  string line;
 
-    int type = m.getType();
-    if (type == PROMOT_QUEEN)   s += "q";
-    else if (type == PROMOT_ROOK)     s += "r";
-    else if (type == PROMOT_BISHOP)   s += "b";
-    else if (type == PROMOT_KNIGHT)   s += "n";
-    
-    return s;
+  // Clear status flags for standard input streams
+  cin.clear();
+
+  while (getline(cin, line)) {
+    if (line.empty())
+      continue;
+
+    stringstream ss(line);
+    string command;
+    ss >> command;
+
+    if (command == "uci") {
+      // Identify engine properties to the host GUI software thread
+      cout << "id name Luna\n";
+      cout << "id author Mr Kabalan\n";
+      cout << "uciok\n" << flush;
+    } else if (command == "isready") {
+      cout << "readyok\n" << flush;
+    } else if (command == "ucinewgame") {
+      board.init();
+    } else if (command == "position") {
+      parsePosition(line, board, gen);
+    } else if (command == "go") {
+      parseGo(line, board, gen);
+    } else if (command == "quit") {
+      break;
+    }
+  }
 }
 
-Move parseUCIMove(const std::string& moveStr, const MoveList& legalMoves) {
-    if (moveStr.length() < 4) return Move();
+// Parses layout positions (e.g. "position startpos moves e2e4 e7e5")
+void UCI::parsePosition(const string &input, Board &board, GenerateMoves &gen) {
+  stringstream ss(input);
+  string token;
+  ss >> token; // consume "position"
 
-    int fromCol = moveStr[0] - 'a';
-    int fromRow = moveStr[1] - '1';
-    int toCol   = moveStr[2] - 'a';
-    int toRow   = moveStr[3] - '1';
+  ss >> token;
+  if (token == "startpos") {
 
-    int from = fromRow * 8 + fromCol;
-    int to   = toRow   * 8 + toCol;
+    board.init();
+  }
 
-    if (from < 0 || from > 63 || to < 0 || to > 63 || from == to) return Move();
+  // Skip tokens until we reach the "moves" list
+  while (ss >> token) {
+    if (token == "moves")
+      break;
+  }
 
-    char promo = (moveStr.length() == 5) ? moveStr[4] : 0;
+  while (ss >> token) {
+    MoveList legalMoves = gen.generateLegalMoves(board, board.sideToMove);
+    bool found = false;
 
     for (int i = 0; i < legalMoves.count; i++) {
-        Move m = legalMoves.moves[i];
-        if (m.getFrom() != from || m.getTo() != to) continue;
+      Move m = legalMoves.moves[i];
 
-        if (promo != 0) {
-            int t = m.getType();
-            if (promo == 'q' && t != PROMOT_QUEEN) continue;
-            if (promo == 'r' && t != PROMOT_ROOK) continue;
-            if (promo == 'b' && t != PROMOT_BISHOP) continue;
-            if (promo == 'n' && t != PROMOT_KNIGHT) continue;
-        }
-        return m;
+      // Build the UCI string
+      string moveStr = sq(m.getFrom()) + sq(m.getTo());
+
+      if (m.getType() >= PROMOT_QUEEN) {
+        if (m.getType() == PROMOT_QUEEN)
+          moveStr += "q";
+        else if (m.getType() == PROMOT_ROOK)
+          moveStr += "r";
+        else if (m.getType() == PROMOT_BISHOP)
+          moveStr += "b";
+        else if (m.getType() == PROMOT_KNIGHT)
+          moveStr += "n";
+      }
+
+      if (token == moveStr) {
+        board.makeMove(m);
+        found = true;
+        break;
+      }
+
+      // Move the debug print inside the loop to see what it's comparing against
+      // std::cout << "DEBUG: Comparing " << token << " vs " << moveStr <<
+      // std::endl;
     }
-    return Move();
+
+    if (!found) {
+      std::cout << "info string Warning: Illegal/Unknown move: " << token
+                << std::endl;
+    }
+  }
+}
+
+// Parses calculation clocks (e.g. "go wtime 300000 btime 280000 winc 2000 binc
+// 2000")
+void UCI::parseGo(const string &input, Board &board, GenerateMoves &gen) {
+  stringstream ss(input);
+  string token;
+
+  long long wtime = -1, btime = -1;
+  long long winc = 0, binc = 0;
+  int depth = 10; // Fallback depth search cap
+  int movesToGo = 40;
+
+  while (ss >> token) {
+    if (token == "wtime")
+      ss >> wtime;
+    else if (token == "btime")
+      ss >> btime;
+    else if (token == "winc")
+      ss >> winc;
+    else if (token == "binc")
+      ss >> binc;
+    else if (token == "depth")
+      ss >> depth;
+    else if (token == "movestogo")
+      ss >> movesToGo;
+  }
+
+  // Allocate targeted timing windows relative to active side color
+  long long myTime = (board.sideToMove == 0) ? wtime : btime;
+  long long myInc = (board.sideToMove == 0) ? winc : binc;
+
+  // Execute search routine utilizing our time management system
+  Move bestMove = gen.getBestMove(board, depth, myTime, myInc, movesToGo);
+
+  // Format special promotion indicators if necessary
+  string promoSuffix = "";
+  if (bestMove.getType() == PROMOT_QUEEN)
+    promoSuffix = "q";
+  if (bestMove.getType() == PROMOT_ROOK)
+    promoSuffix = "r";
+  if (bestMove.getType() == PROMOT_BISHOP)
+    promoSuffix = "b";
+  if (bestMove.getType() == PROMOT_KNIGHT)
+    promoSuffix = "n";
+
+  // Transmit computed move back up to host manager thread loop
+  cout << "bestmove " << sq(bestMove.getFrom()) << sq(bestMove.getTo())
+       << promoSuffix << endl
+       << flush;
 }
