@@ -128,6 +128,15 @@ void checkTimeBudget()
   int negamax(Board &board, int depth, int alpha, int beta, int ply);
   int quiescence(Board& board, int alpha, int beta, int ply);
   void generateCaptures(const Board &board, int side, MoveList &list);
+
+  // SEE — Static Exchange Evaluation
+  int see(const Board& board, int toSq, int target, int fromSq, int atter) const;
+  int seeCapture(const Board& board, Move move) const;
+
+  // Mobility evaluation (called from board evaluate via friend or passed in)
+  int evalMobility(const Board& board) const;
+  int evalKingSafety(const Board& board) const;
+  int evalFull(Board& board) const;
 };
 
 #endif

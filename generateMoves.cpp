@@ -213,19 +213,112 @@ void GenerateMoves::generateAllMoves(const Board& board, int side, MoveList& lis
 }
 
 // ─────────────────────────────────────────────────────────
-// MOVE ORDERING
+// SEE — STATIC EXCHANGE EVALUATION
+// Returns the material gain/loss of a capture on toSq.
+// Positive = winning capture, Negative = losing capture.
 // ─────────────────────────────────────────────────────────
-static int mvvLva(const Board& board, const Move& m)
+int GenerateMoves::seeCapture(const Board& board, Move move) const
 {
-    static const int val[] = { 100, 300, 310, 500, 900, 20000 };
-    if (m.getType() == EN_PASSANT) return 0;  // PxP
-    int v = board.getPieceAt(m.getTo());
-    int a = board.getPieceAt(m.getFrom());
-    int vv = (v != -1) ? val[v] : 0;
-    int av = (a != -1) ? val[a] : 0;
-    return 10 * vv - av;
+    static const int seeVal[] = { 100, 300, 310, 500, 900, 20000 };
+
+    int from   = move.getFrom();
+    int toSq   = move.getTo();
+    int target = board.getPieceAt(toSq);   // piece being captured
+    int atter  = board.getPieceAt(from);   // piece doing the capturing
+
+    if (target == -1) return 0; // nothing to capture
+    if (atter  == -1) return 0;
+
+    // gain[0] = value of piece captured on first capture
+    int gain[32];
+    int d = 0;
+    gain[d] = seeVal[target];
+
+    // Build occupancy and track attackers
+    uint64_t occ       = board.occupied;
+    uint64_t attackers = 0ULL; // all pieces attacking toSq
+
+    // Collect all attackers of toSq from both sides
+    attackers |= (pawnToMasks[0][toSq] & board.whitePawns);
+    attackers |= (pawnToMasks[1][toSq] & board.blackPawns);
+    attackers |= (knightMasks[toSq] & (board.whiteKnights | board.blackKnights));
+    attackers |= (kingMasks[toSq]   & (board.whiteKing    | board.blackKing));
+    attackers |= (getBishopAttacks(toSq, occ) & (board.whiteBishops | board.blackBishops |
+                                                   board.whiteQueen  | board.blackQueen));
+    attackers |= (getRookAttacks(toSq, occ)   & (board.whiteRooks   | board.blackRooks   |
+                                                   board.whiteQueen  | board.blackQueen));
+
+    // Side doing the first capture
+    int side = board.sideToMove;
+
+    // Remove the first capturing piece from occ
+    occ &= ~(1ULL << from);
+    attackers &= ~(1ULL << from);
+
+    // Simulate the exchange
+    while (true)
+    {
+        d++;
+        gain[d] = seeVal[atter] - gain[d - 1];
+
+        // Prune: if even the best case doesn't improve, stop
+        if (std::max(-gain[d - 1], gain[d]) < 0) break;
+
+        side ^= 1;
+
+        // Find least valuable attacker for the current side
+        uint64_t sidePieces = (side == 0) ? board.whitePieces : board.blackPieces;
+        uint64_t sideAttackers = attackers & sidePieces;
+        if (!sideAttackers) break;
+
+        // Pick least valuable piece
+        int nextPiece = -1;
+        uint64_t nextBit = 0ULL;
+        for (int p = PAWN; p <= KING; p++)
+        {
+            uint64_t bb = 0ULL;
+            if (side == 0) {
+                if (p == PAWN)   bb = board.whitePawns   & sideAttackers;
+                if (p == KNIGHT) bb = board.whiteKnights & sideAttackers;
+                if (p == BISHOP) bb = board.whiteBishops & sideAttackers;
+                if (p == ROOK)   bb = board.whiteRooks   & sideAttackers;
+                if (p == QUEEN)  bb = board.whiteQueen   & sideAttackers;
+                if (p == KING)   bb = board.whiteKing    & sideAttackers;
+            } else {
+                if (p == PAWN)   bb = board.blackPawns   & sideAttackers;
+                if (p == KNIGHT) bb = board.blackKnights & sideAttackers;
+                if (p == BISHOP) bb = board.blackBishops & sideAttackers;
+                if (p == ROOK)   bb = board.blackRooks   & sideAttackers;
+                if (p == QUEEN)  bb = board.blackQueen   & sideAttackers;
+                if (p == KING)   bb = board.blackKing    & sideAttackers;
+            }
+            if (bb) { nextPiece = p; nextBit = bb & -bb; break; }
+        }
+        if (nextPiece == -1) break;
+
+        atter = nextPiece;
+
+        // Remove this attacker, reveal X-ray attackers (sliders behind it)
+        occ      &= ~nextBit;
+        attackers &= ~nextBit;
+
+        // Re-add any sliders that were behind this piece (X-ray)
+        attackers |= (getBishopAttacks(toSq, occ) & (board.whiteBishops | board.blackBishops |
+                                                       board.whiteQueen  | board.blackQueen))  & occ;
+        attackers |= (getRookAttacks(toSq, occ)   & (board.whiteRooks   | board.blackRooks   |
+                                                       board.whiteQueen  | board.blackQueen))  & occ;
+    }
+
+    // Minimax back through the gain array
+    while (--d)
+        gain[d - 1] = std::max(-gain[d], gain[d - 1]);
+
+    return gain[0];
 }
 
+// ─────────────────────────────────────────────────────────
+// MOVE ORDERING
+// ─────────────────────────────────────────────────────────
 void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMove)
 {
     int scores[256];
@@ -235,6 +328,7 @@ void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMo
         Move m = moves.moves[i];
         int  s = 0;
 
+        // TT move always first
         if (m.data == ttMove.data)
         {
             scores[i] = 10'000'000;
@@ -246,7 +340,12 @@ void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMo
 
         if (isCapture || isEP)
         {
-            s = 1'000'000 + mvvLva(board, m);
+            // Use SEE to distinguish winning/losing captures
+            int seeScore = isEP ? 0 : seeCapture(board, m);
+            if (seeScore >= 0)
+                s = 1'000'000 + seeScore;   // winning/equal capture
+            else
+                s = 500'000  + seeScore;    // losing capture — still above quiets but below killers
         }
         else if (m.getType() >= PROMOT_QUEEN)
         {
@@ -269,7 +368,7 @@ void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMo
         scores[i] = s;
     }
 
-    // Insertion sort — O(n²) but fine for ≤256 moves
+    // Insertion sort
     for (int i = 1; i < moves.count; i++)
     {
         Move m = moves.moves[i];
@@ -288,15 +387,13 @@ void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMo
 
 void GenerateMoves::orderCaptures(MoveList& list, const Board& board)
 {
-    static const int val[] = { 100, 300, 310, 500, 900, 20000 };
     int scores[256];
 
     for (int i = 0; i < list.count; i++)
     {
         Move m = list.moves[i];
-        int v = board.getPieceAt(m.getTo());
-        int a = board.getPieceAt(m.getFrom());
-        scores[i] = 10 * ((v!=-1)?val[v]:0) - ((a!=-1)?val[a]:0);
+        if (m.getType() == EN_PASSANT) { scores[i] = 0; continue; }
+        scores[i] = seeCapture(board, m);
     }
 
     for (int i = 1; i < list.count; i++)
@@ -343,29 +440,302 @@ void GenerateMoves::generateCaptures(const Board& board, int side, MoveList& lis
 }
 
 // ─────────────────────────────────────────────────────────
+// MOBILITY EVALUATION
+// Counts reachable squares for each piece, rewards having more options.
+// Returns score from white's perspective (positive = white better).
+// ─────────────────────────────────────────────────────────
+int GenerateMoves::evalMobility(const Board& board) const
+{
+    // Mobility bonus per extra square (MG, EG)
+    // Tuned per piece: knights and bishops benefit most from mobility
+    static const int knightMobMG = 4,  knightMobEG = 4;
+    static const int bishopMobMG = 3,  bishopMobEG = 5;
+    static const int rookMobMG   = 2,  rookMobEG   = 3;
+    static const int queenMobMG  = 1,  queenMobEG  = 2;
+
+    // Baseline mobility counts (a piece with N squares scores N - baseline)
+    // so a trapped piece scores negative
+    static const int knightBase = 4;
+    static const int bishopBase = 6;
+    static const int rookBase   = 7;
+    static const int queenBase  = 14;
+
+    int mg = 0, eg = 0;
+
+    // Phase for tapering (reuse same formula as board.evaluate)
+    int phase =
+        __builtin_popcountll(board.whiteKnights | board.blackKnights) * 1 +
+        __builtin_popcountll(board.whiteBishops | board.blackBishops) * 1 +
+        __builtin_popcountll(board.whiteRooks   | board.blackRooks)   * 2 +
+        __builtin_popcountll(board.whiteQueen   | board.blackQueen)   * 4;
+    if (phase > 24) phase = 24;
+    int mgPhase = phase;
+    int egPhase = 24 - phase;
+
+    uint64_t occ = board.occupied;
+
+    // ── White mobility ────────────────────────────────────
+    {
+        uint64_t bb = board.whiteKnights;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(knightMasks[sq] & ~board.whitePieces);
+            mg += (mob - knightBase) * knightMobMG;
+            eg += (mob - knightBase) * knightMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.whiteBishops;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getBishopAttacks(sq, occ) & ~board.whitePieces);
+            mg += (mob - bishopBase) * bishopMobMG;
+            eg += (mob - bishopBase) * bishopMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.whiteRooks;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getRookAttacks(sq, occ) & ~board.whitePieces);
+            mg += (mob - rookBase) * rookMobMG;
+            eg += (mob - rookBase) * rookMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.whiteQueen;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getQueenAttacks(sq, occ) & ~board.whitePieces);
+            mg += (mob - queenBase) * queenMobMG;
+            eg += (mob - queenBase) * queenMobEG;
+            bb &= bb - 1;
+        }
+    }
+
+    // ── Black mobility ────────────────────────────────────
+    {
+        uint64_t bb = board.blackKnights;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(knightMasks[sq] & ~board.blackPieces);
+            mg -= (mob - knightBase) * knightMobMG;
+            eg -= (mob - knightBase) * knightMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.blackBishops;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getBishopAttacks(sq, occ) & ~board.blackPieces);
+            mg -= (mob - bishopBase) * bishopMobMG;
+            eg -= (mob - bishopBase) * bishopMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.blackRooks;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getRookAttacks(sq, occ) & ~board.blackPieces);
+            mg -= (mob - rookBase) * rookMobMG;
+            eg -= (mob - rookBase) * rookMobEG;
+            bb &= bb - 1;
+        }
+        bb = board.blackQueen;
+        while (bb) {
+            int sq  = __builtin_ctzll(bb);
+            int mob = __builtin_popcountll(getQueenAttacks(sq, occ) & ~board.blackPieces);
+            mg -= (mob - queenBase) * queenMobMG;
+            eg -= (mob - queenBase) * queenMobEG;
+            bb &= bb - 1;
+        }
+    }
+
+    return (mg * mgPhase + eg * egPhase) / 24;
+}
+
+// ─────────────────────────────────────────────────────────
+// KING SAFETY EVALUATION
+// Counts enemy pieces attacking squares near each king.
+// Weighted by piece type and attacker count.
+// Returns score from white's perspective.
+// ─────────────────────────────────────────────────────────
+int GenerateMoves::evalKingSafety(const Board& board) const
+{
+    // Only meaningful in middlegame — fade out as pieces come off
+    int phase =
+        __builtin_popcountll(board.whiteKnights | board.blackKnights) * 1 +
+        __builtin_popcountll(board.whiteBishops | board.blackBishops) * 1 +
+        __builtin_popcountll(board.whiteRooks   | board.blackRooks)   * 2 +
+        __builtin_popcountll(board.whiteQueen   | board.blackQueen)   * 4;
+    if (phase > 24) phase = 24;
+
+    // Attack weights per piece type
+    static const int attackWeight[] = { 0, 2, 2, 3, 5, 0 }; // pawn,knight,bishop,rook,queen,king
+
+    // Safety table: maps attacker_count (0-7) to penalty
+    // Exponential — one attacker is annoying, three is deadly
+    static const int safetyTable[] = { 0, 5, 15, 35, 65, 100, 140, 180 };
+
+    uint64_t occ = board.occupied;
+
+    auto kingZone = [&](int kingSq) -> uint64_t {
+        // King zone = king square + all squares king can move to + one rank further
+        uint64_t zone = kingMasks[kingSq] | (1ULL << kingSq);
+        return zone;
+    };
+
+    int score = 0;
+
+    // ── White king safety (black attacks near white king) ──
+    {
+        int   wk      = __builtin_ctzll(board.whiteKing);
+        uint64_t zone = kingZone(wk);
+        int   attackCount  = 0;
+        int   attackWeight_sum = 0;
+
+        // Black knights
+        uint64_t bb = board.blackKnights;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            if (knightMasks[sq] & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[KNIGHT];
+            }
+            bb &= bb - 1;
+        }
+        // Black bishops
+        bb = board.blackBishops;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getBishopAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[BISHOP] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+        // Black rooks
+        bb = board.blackRooks;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getRookAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[ROOK] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+        // Black queen
+        bb = board.blackQueen;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getQueenAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[QUEEN] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+
+        int idx = std::min(attackCount, 7);
+        score -= safetyTable[idx] + attackWeight_sum * 2;
+    }
+
+    // ── Black king safety (white attacks near black king) ──
+    {
+        int   bk      = __builtin_ctzll(board.blackKing);
+        uint64_t zone = kingZone(bk);
+        int   attackCount  = 0;
+        int   attackWeight_sum = 0;
+
+        uint64_t bb = board.whiteKnights;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            if (knightMasks[sq] & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[KNIGHT];
+            }
+            bb &= bb - 1;
+        }
+        bb = board.whiteBishops;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getBishopAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[BISHOP] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+        bb = board.whiteRooks;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getRookAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[ROOK] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+        bb = board.whiteQueen;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            uint64_t attacks = getQueenAttacks(sq, occ);
+            if (attacks & zone) {
+                attackCount++;
+                attackWeight_sum += attackWeight[QUEEN] *
+                    __builtin_popcountll(attacks & zone);
+            }
+            bb &= bb - 1;
+        }
+
+        int idx = std::min(attackCount, 7);
+        score += safetyTable[idx] + attackWeight_sum * 2;
+    }
+
+    // Taper: king safety only matters in middlegame
+    return (score * phase) / 24;
+}
+
+// ─────────────────────────────────────────────────────────
+// FULL EVALUATION WRAPPER
+// Combines material+PST (board.evaluate) + mobility + king safety.
+// All search code calls this instead of board.evaluate() directly.
+// ─────────────────────────────────────────────────────────
+int GenerateMoves::evalFull(Board& board) const
+{
+    int base     = board.evaluate();     // material + PST + pawn structure
+    int mobility = evalMobility(board);  // piece mobility
+    int safety   = evalKingSafety(board);// king attack scoring
+
+    // base is already from side-to-move perspective
+    // mobility and safety are from white's perspective, so flip if black to move
+    int bonus = mobility - safety;
+    if (board.sideToMove == 1) bonus = -bonus;
+
+    return base + bonus;
+}
+
+// ─────────────────────────────────────────────────────────
 // QUIESCENCE SEARCH
 // ─────────────────────────────────────────────────────────
 int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
 {
     nodesSearched++;
 
-    // Check time every 1024 nodes
     if ((nodesSearched & 1023) == 0)
         checkTimeBudget();
 
-    if (searchAborted)
-        return 0;
+    if (searchAborted) return 0;
+    if (board.isThreefoldRepetition()) return 0;
 
-    if (board.isThreefoldRepetition())
-        return 0;
-
-    int standPat = board.evaluate();
+    int standPat = evalFull(board);
     if (standPat >= beta) return beta;
     if (standPat > alpha) alpha = standPat;
 
-    // Delta pruning: skip if even capturing the best possible piece can't raise alpha
-    const int DELTA = 975;  // queen value
-    if (standPat + DELTA < alpha) return alpha;
+    // Delta pruning: skip if even a queen capture can't raise alpha
+    if (standPat + 975 < alpha) return alpha;
 
     MoveList captures;
     generateCaptures(board, board.sideToMove, captures);
@@ -377,6 +747,10 @@ int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
     for (int i = 0; i < captures.count; i++)
     {
         Move move = captures.moves[i];
+
+        // Skip SEE-losing captures in qsearch (they only waste time)
+        if (move.getType() != EN_PASSANT && seeCapture(board, move) < 0)
+            continue;
 
         board.makeMove(move);
 
@@ -412,14 +786,13 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     if ((nodesSearched & 1023) == 0)
         checkTimeBudget();
 
-    if (searchAborted)
-        return 0;
+    if (searchAborted) return 0;
 
     // Draw detection
-    if (ply > 0 && board.isThreefoldRepetition())
-        return 0;
+    if (ply > 0 && board.isThreefoldRepetition()) return 0;
 
     int originalAlpha = alpha;
+    bool isPV = (beta - alpha) > 1; // PV node has a full window
 
     // ── TT Probe ──────────────────────────────────────────
     int ttIndex = board.zobristHash % TT_SIZE;
@@ -433,8 +806,6 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         if (ttEntry.depth >= depth)
         {
             int s = ttEntry.score;
-
-            // Adjust mate scores for current ply
             if (s >  90000) s -= ply;
             if (s < -90000) s += ply;
 
@@ -449,10 +820,22 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
     // ── Check extension ───────────────────────────────────
     bool inCheck = isInCheck(board, board.sideToMove);
-    if (inCheck) depth++;   // extend by 1 when in check
+    if (inCheck) depth++;
+
+    // ── Static eval (used by pruning techniques) ──────────
+    int staticEval = evalFull(board);
+
+    // ── Reverse Futility Pruning (Static Null Move) ───────
+    // If static eval beats beta by a big margin, we're probably too good — cut off
+    if (!inCheck && !isPV && depth >= 1 && depth <= 6)
+    {
+        int rfpMargin = 120 * depth;
+        if (staticEval - rfpMargin >= beta)
+            return staticEval - rfpMargin;
+    }
 
     // ── Null Move Pruning ──────────────────────────────────
-    if (!inCheck && depth >= 3 && ply > 0)
+    if (!inCheck && !isPV && depth >= 3 && ply > 0 && staticEval >= beta)
     {
         int bigPieces = __builtin_popcountll(
             (board.sideToMove == 0)
@@ -461,7 +844,7 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
         if (bigPieces >= 1)
         {
-            int R = (depth >= 6) ? 3 : 2;
+            int R = 3 + (depth >= 6 ? 1 : 0);
             board.makeNullMove();
             int nullScore = -negamax(board, depth - 1 - R, -beta, -beta + 1, ply + 1);
             board.undoNullMove();
@@ -474,6 +857,16 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     // ── Move generation ───────────────────────────────────
     MoveList moves;
     generateAllMoves(board, board.sideToMove, moves);
+
+    // Validate TT move — only use it if it's actually in the generated list
+    // A stale/colliding TT entry can produce a completely bogus move
+    {
+        bool ttValid = false;
+        for (int i = 0; i < moves.count; i++)
+            if (moves.moves[i].data == ttMove.data) { ttValid = true; break; }
+        if (!ttValid) ttMove = Move(0, 0, NORMAL);
+    }
+
     orderMoves(moves, board, ply, ttMove);
 
     int  bestScore  = -9999999;
@@ -486,9 +879,15 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     {
         Move move = moves.moves[i];
 
+        // ── Compute move flags BEFORE makeMove ────────────
+        bool isCapture   = ((board.occupied >> move.getTo()) & 1ULL) != 0
+                        || move.getType() == EN_PASSANT;
+        bool isPromotion = move.getType() >= PROMOT_QUEEN;
+        bool isQuiet     = !isCapture && !isPromotion;
+
         board.makeMove(move);
 
-        // Skip illegal moves (king left in check)
+        // Skip illegal moves (king left in check) — MUST happen before any pruning
         int kingSq = (side == 0)
             ? __builtin_ctzll(board.whiteKing)
             : __builtin_ctzll(board.blackKing);
@@ -501,25 +900,33 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
         legalCount++;
 
-        // ── Late Move Reductions (LMR) ─────────────────────
-        int score;
-        bool isCapture = (board.getPieceAt(move.getTo()) != -1) ||
-                         (move.getType() == EN_PASSANT);
-        // Note: after makeMove, side flipped, so we check the moving side's king, but
-        // the capture flag is about the destination which is already set.
-        // Re-check: isCapture should look at what was there before the move.
-        // Use the occupied BB before the move — captured piece is now gone.
-        // Simple heuristic: if material changed (captured piece removed), it's a capture.
-        // We'll use a simpler check: type-based + the now-missing piece.
-        bool isQuiet = (move.getType() == NORMAL || move.getType() == DOUBLE_PUSH);
+        // ── Futility Pruning ──────────────────────────────
+        // Only prune AFTER we know the move is legal
+        if (!inCheck && isQuiet && legalCount > 1 && depth <= 3 && !isPV)
+        {
+            static const int futilityMargin[] = { 0, 150, 300, 500 };
+            if (staticEval + futilityMargin[depth] <= alpha)
+            {
+                board.undoMove();
+                continue;
+            }
+        }
 
+        int score;
+
+        // ── Late Move Reductions (LMR) ─────────────────────
         if (!inCheck && depth >= 3 && legalCount > 3 && isQuiet)
         {
-            // Reduced search
-            int R = 1 + (legalCount > 6 ? 1 : 0);
+            // Scale reduction with depth and move count
+            int R = 1;
+            if (legalCount > 6)  R = 2;
+            if (legalCount > 12) R = 3;
+            if (depth >= 8)      R++;
+            R = std::min(R, depth - 2); // never reduce into qsearch directly
+
             score = -negamax(board, depth - 1 - R, -alpha - 1, -alpha, ply + 1);
 
-            // If it beats alpha, re-search at full depth
+            // Full re-search if LMR move beats alpha
             if (score > alpha)
                 score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
         }
@@ -542,12 +949,10 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         {
             alpha = score;
 
-            // History heuristic: only quiet moves that raise alpha
             if (isQuiet)
             {
                 int hIdx = move.getFrom() * 64 + move.getTo();
                 historyTable[hIdx] += depth * depth;
-                // Cap to avoid overflow
                 if (historyTable[hIdx] > 1'000'000)
                     historyTable[hIdx] = 1'000'000;
             }
@@ -555,7 +960,6 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
         if (alpha >= beta)
         {
-            // Killer move: only quiet moves
             if (isQuiet && ply < 32)
             {
                 if (killerMoves[ply][0].data != move.data)
@@ -564,16 +968,12 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
                     killerMoves[ply][0] = move;
                 }
             }
-            break;  // Beta cutoff
+            break;
         }
     }
 
-    // No legal moves = checkmate or stalemate
     if (legalCount == 0)
-    {
-        if (inCheck) return -99000 + ply;
-        else         return 0;
-    }
+        return inCheck ? (-99000 + ply) : 0;
 
     // ── TT Store ──────────────────────────────────────────
     if (!searchAborted)
@@ -602,14 +1002,10 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
     if (myTimeLeftMs <= 0) myTimeLeftMs = 5000;
     if (movesToGo    <= 0) movesToGo    = 40;
 
-    // Sensible time allocation
-    // Use roughly 1/(movesToGo) of remaining time, plus 75% of increment
     timeLimitMs = (myTimeLeftMs / (movesToGo + 5)) + (long long)(incrementMs * 0.75);
-
-    // Hard caps
-    if (timeLimitMs > 8000)                              timeLimitMs = 8000;
-    if (timeLimitMs > (long long)(myTimeLeftMs * 0.75))  timeLimitMs = (long long)(myTimeLeftMs * 0.75);
-    if (timeLimitMs < 20)                                timeLimitMs = 20;
+    if (timeLimitMs > 8000)                             timeLimitMs = 8000;
+    if (timeLimitMs > (long long)(myTimeLeftMs * 0.75)) timeLimitMs = (long long)(myTimeLeftMs * 0.75);
+    if (timeLimitMs < 20)                               timeLimitMs = 20;
 
     searchStartTime = std::chrono::high_resolution_clock::now();
     searchAborted   = false;
@@ -619,14 +1015,13 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
     ageHistory();
 
     MoveList legalRootMoves = generateLegalMoves(board, board.sideToMove);
+    if (legalRootMoves.count == 0) return Move(0, 0, NORMAL);
 
-    Move absoluteBestMove;
-    if (legalRootMoves.count == 0) return absoluteBestMove;
-    absoluteBestMove = legalRootMoves.moves[0];
+    Move absoluteBestMove = legalRootMoves.moves[0];
 
-    // Seed TT move ordering
+    // Seed ordering from TT
     {
-        Move ttMove;
+        Move ttMove(0, 0, NORMAL);
         int idx = board.zobristHash % TT_SIZE;
         if (transpositionTable[idx].zobristHash == board.zobristHash)
             ttMove = transpositionTable[idx].bestMove;
@@ -639,25 +1034,25 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++)
     {
         // ── Aspiration Windows ────────────────────────────
-        int delta  = 50;
-        int alpha  = (currentDepth >= 4) ? prevScore - delta : -999999;
-        int beta   = (currentDepth >= 4) ? prevScore + delta :  999999;
+        int delta = 50;
+        int alpha = (currentDepth >= 4) ? prevScore - delta : -999999;
+        int beta  = (currentDepth >= 4) ? prevScore + delta :  999999;
 
-        Move  bestMoveThisDepth  = absoluteBestMove;
-        int   bestScoreThisDepth = -999999;
+        Move bestMoveThisDepth  = absoluteBestMove;
+        int  bestScoreThisDepth = -999999;
 
         while (true)
         {
             bestScoreThisDepth = -999999;
             bestMoveThisDepth  = absoluteBestMove;
-            int localAlpha     = alpha;
 
             for (int i = 0; i < legalRootMoves.count; i++)
             {
                 Move move = legalRootMoves.moves[i];
                 board.makeMove(move);
 
-                int score = -negamax(board, currentDepth - 1, -beta, -localAlpha, 1);
+                // Full window for every root move — correct and simple
+                int score = -negamax(board, currentDepth - 1, -beta, -alpha, 1);
                 board.undoMove();
 
                 checkTimeBudget();
@@ -668,34 +1063,31 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
                     bestScoreThisDepth = score;
                     bestMoveThisDepth  = move;
                 }
-
-                if (score > localAlpha)
-                    localAlpha = score;
-
-                if (localAlpha >= beta) break;
+                if (score > alpha)
+                    alpha = score;
+                if (alpha >= beta) break;
             }
 
             if (searchAborted) goto done;
 
-            // Check aspiration window result
-            if (bestScoreThisDepth <= alpha)
+            // Widen window and retry on fail-low or fail-high
+            if (bestScoreThisDepth <= prevScore - delta)
             {
-                alpha -= delta;
+                alpha  = bestScoreThisDepth - delta;
                 delta *= 2;
                 if (alpha < -999999) alpha = -999999;
             }
-            else if (bestScoreThisDepth >= beta)
+            else if (bestScoreThisDepth >= prevScore + delta)
             {
-                beta  += delta;
+                beta   = bestScoreThisDepth + delta;
                 delta *= 2;
                 if (beta > 999999) beta = 999999;
             }
             else
             {
-                break;  // Score is within window — done
+                break; // Score inside window — done
             }
 
-            // If window is fully open, don't loop again
             if (alpha <= -999999 && beta >= 999999) break;
         }
 
@@ -712,28 +1104,27 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
             transpositionTable[idx].bestMove    = bestMoveThisDepth;
         }
 
-        // Re-order root moves: best move first
         orderMoves(legalRootMoves, board, 0, bestMoveThisDepth);
 
         auto now     = std::chrono::high_resolution_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStartTime).count();
         if (elapsed == 0) elapsed = 1;
 
-        std::cout << "info depth " << currentDepth
-                  << " score cp "  << bestScoreThisDepth
-                  << " time "      << elapsed
-                  << " nodes "     << nodesSearched
-                  << " nps "       << (nodesSearched * 1000 / elapsed)
+        std::cout << "info depth "  << currentDepth
+                  << " score cp "   << bestScoreThisDepth
+                  << " time "       << elapsed
+                  << " nodes "      << nodesSearched
+                  << " nps "        << (nodesSearched * 1000 / elapsed)
                   << std::endl;
 
         if (legalRootMoves.count == 1) break;
 
-        // Time check: if we've used more than 60% of budget, don't start next depth
+        // Don't start a new depth if we've used more than 60% of time budget
         auto elapsedNow = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - searchStartTime).count();
         if (elapsedNow >= timeLimitMs * 6 / 10) break;
     }
 
-    done:
+done:
     return absoluteBestMove;
 }

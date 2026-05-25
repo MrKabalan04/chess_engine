@@ -275,102 +275,97 @@ void Board::makeMove(const Move& move) {
     int side = sideToMove;
     int opponent = side ^ 1;
 
-    // 1. Identify pieces first!
     int movingPiece = getPieceAt(from);
-    int captured = (type == EN_PASSANT) ? getPieceAt((side == 0) ? (to - 8) : (to + 8)) : getPieceAt(to);
+    int captured    = (type == EN_PASSANT)
+                        ? PAWN
+                        : getPieceAt(to);
 
-    // --- DEBUG DIAGNOSTIC ---
-    if (movingPiece == -1) {
-        std::cout << "info string ERROR: No piece found at " << from << "!" << std::endl;
-        return; 
-    }
-    // ------------------------
-
-    // 2. Prepare Undo info
-    UndoInfo& undo = undoStack[undoCount++];
-    undo.move = move;
-    undo.movedPiece = movingPiece;
-    undo.capturedPiece = captured;
-    undo.castlingRights = castlingRights;
+    // Always push undo FIRST — never return early after this point
+    UndoInfo& undo       = undoStack[undoCount++];
+    undo.move            = move;
+    undo.movedPiece      = movingPiece;
+    undo.capturedPiece   = captured;
+    undo.castlingRights  = castlingRights;
     undo.enPassantSquare = enPassantSquare;
-    undo.zobristHash = zobristHash;
+    undo.zobristHash     = zobristHash;
 
-    // 3. Update Board (Remove then Add)
-    // Always remove from source
+    // Guard: if there is no piece here the board is already corrupt,
+    // but we must still keep make/undo balanced so the stack stays clean.
+    if (movingPiece == -1) {
+        // Push a no-op: just flip the side so undoMove restores correctly
+        zobristHash ^= zobristSideToMove;
+        sideToMove  ^= 1;
+        positionHistory[historyCount++] = zobristHash;
+        return;
+    }
+
+    // Remove moving piece from source
     zobristHash ^= zobristTable[movingPiece][side][from];
-    int pieceMoving = getPieceAt(from);
     removePiece(from, movingPiece, side == 0);
 
-    // Remove captured piece if it exists
+    // Remove captured piece if any
     if (captured != -1) {
-        int capSq = (type == EN_PASSANT) ? ((side == 0) ? (to - 8) : (to + 8)) : to;
+        int capSq = (type == EN_PASSANT)
+                        ? ((side == 0) ? (to - 8) : (to + 8))
+                        : to;
         zobristHash ^= zobristTable[captured][opponent][capSq];
         removePiece(capSq, captured, opponent == 0);
     }
 
-    // Handle Promotions
-    int finalType = (type >= PROMOT_QUEEN) ? 
-        ((type == PROMOT_QUEEN) ? QUEEN : (type == PROMOT_ROOK) ? ROOK : 
-         (type == PROMOT_BISHOP) ? BISHOP : KNIGHT) : movingPiece;
+    // Determine final piece type (promotions change it)
+    int finalType = movingPiece;
+    if      (type == PROMOT_QUEEN)  finalType = QUEEN;
+    else if (type == PROMOT_ROOK)   finalType = ROOK;
+    else if (type == PROMOT_BISHOP) finalType = BISHOP;
+    else if (type == PROMOT_KNIGHT) finalType = KNIGHT;
 
-    // Special: Castle
     if (type == CASTLE) {
-        // Move king and rook
         addPiece(to, KING, side == 0);
         zobristHash ^= zobristTable[KING][side][to];
-        
+
         int rFrom = (to == 6) ? 7 : (to == 2) ? 0 : (to == 62) ? 63 : 56;
         int rTo   = (to == 6) ? 5 : (to == 2) ? 3 : (to == 62) ? 61 : 59;
         removePiece(rFrom, ROOK, side == 0);
-        addPiece(rTo, ROOK, side == 0);
+        addPiece(rTo,      ROOK, side == 0);
         zobristHash ^= zobristTable[ROOK][side][rFrom];
         zobristHash ^= zobristTable[ROOK][side][rTo];
     } else {
-        // Normal move or Promotion
         addPiece(to, finalType, side == 0);
         zobristHash ^= zobristTable[finalType][side][to];
     }
 
-    // --- EN PASSANT UPDATE ---
+    // En passant square update
     if (enPassantSquare != -1)
         zobristHash ^= zobristEnPassant[enPassantSquare % 8];
 
-    if (type == DOUBLE_PUSH)
-        enPassantSquare = (side == 0) ? (from + 8) : (from - 8);
-    else
-        enPassantSquare = -1;
+    enPassantSquare = (type == DOUBLE_PUSH)
+                        ? ((side == 0) ? (from + 8) : (from - 8))
+                        : -1;
 
     if (enPassantSquare != -1)
         zobristHash ^= zobristEnPassant[enPassantSquare % 8];
 
-    // --- CASTLING RIGHTS UPDATE ---
+    // Castling rights update
     uint8_t oldCastling = castlingRights;
-
-    // King moves revoke both rights for that color
     if (movingPiece == KING) {
         if (side == 0) castlingRights &= ~(WHITE_CASTLING_KINGSIDE | WHITE_CASTLING_QUEENSIDE);
         else           castlingRights &= ~(BLACK_CASTLING_KINGSIDE | BLACK_CASTLING_QUEENSIDE);
     }
-    // Rook moves from home square revoke that specific right
     if (from == 0)  castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
     if (from == 7)  castlingRights &= ~WHITE_CASTLING_KINGSIDE;
     if (from == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
     if (from == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
-    // Rook captured on home square also revokes
-    if (to == 0)  castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
-    if (to == 7)  castlingRights &= ~WHITE_CASTLING_KINGSIDE;
-    if (to == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
-    if (to == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
+    if (to   == 0)  castlingRights &= ~WHITE_CASTLING_QUEENSIDE;
+    if (to   == 7)  castlingRights &= ~WHITE_CASTLING_KINGSIDE;
+    if (to   == 56) castlingRights &= ~BLACK_CASTLING_QUEENSIDE;
+    if (to   == 63) castlingRights &= ~BLACK_CASTLING_KINGSIDE;
 
-    // Update Zobrist for changed castling rights
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4; i++)
         if (((oldCastling >> i) & 1) != ((castlingRights >> i) & 1))
             zobristHash ^= zobristCastling[i];
-    }
 
-    // --- SIDE TO MOVE ---
     zobristHash ^= zobristSideToMove;
-    sideToMove ^= 1;
+    sideToMove  ^= 1;
     positionHistory[historyCount++] = zobristHash;
 }
 // =========================
@@ -780,6 +775,8 @@ int Board::evaluate()
     // ── Tapered eval ──────────────────────────────────────
     int total = (mg * mgPhase + eg * egPhase) / 24;
 
+    // NOTE: mobility and king safety are added by GenerateMoves::evalFull()
+    // which wraps this function — do not call evaluate() directly in the search.
     return (sideToMove == 0) ? total : -total;
 }
 
