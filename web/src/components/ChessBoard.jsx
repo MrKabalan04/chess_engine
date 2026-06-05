@@ -16,7 +16,7 @@ import BlackBishop from "../assets/pieces/BlackBishop.svg";
 import BlackQueen from "../assets/pieces/BlackQueen.svg";
 import BlackKing from "../assets/pieces/BlackKing.svg";
 
-const pieceComponents = {
+const pieces = {
   white_pawn: WhitePawn,
   white_rook: WhiteRook,
   white_knight: WhiteKnight,
@@ -38,20 +38,18 @@ function ChessBoard() {
   );
 
   return (
-    <div className="chess-board">
-      {board.map((row, rowIndex) =>
-        row.map((square, colIndex) => (
+    <div className="board">
+      {board.map((row, r) =>
+        row.map((sq, c) => (
           <div
-            key={`${rowIndex}-${colIndex}`}
-            className={`square ${
-              (rowIndex + colIndex) % 2 === 0 ? "light" : "dark"
-            }`}
+            key={`${r}-${c}`}
+            className={`square ${(r + c) % 2 === 0 ? "light" : "dark"}`}
           >
-            {square && (
+            {sq && (
               <img
-                src={pieceComponents[`${square.color}_${square.type}`]}
-                alt=""
+                src={pieces[`${sq.color}_${sq.type}`]}
                 className="piece"
+                draggable="false"
               />
             )}
           </div>

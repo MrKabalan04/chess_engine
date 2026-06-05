@@ -1,0 +1,24 @@
+.header {
+  position: fixed;
+  top: 0;
+  width: 100%;
+  height: 80px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(10, 12, 18, 0.4);
+  backdrop-filter: blur(12px);
+
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.brand {
+  font-size: 22px;
+  letter-spacing: 18px;
+  color: var(--moon);
+  text-shadow: 0 0 18px var(--moon-glow);
+  user-select: none;
+  font-weight: 300;
+}
