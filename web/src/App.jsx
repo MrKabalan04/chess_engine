@@ -1,8 +1,9 @@
 import { useState } from "react";
-import Header from "./components/Header";
+import Header from "././components/layout/Header/Header";
 import ChessBoard from "./components/ChessBoard";
 import Landing from "./components/Landing";
-import Stars from "./components/Stars";      // ✅ import Stars
+import Stars from "./components/Stars";     
+import Footer from "././components/layout/Footer/Footer";
 import "./App.css";
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
           <div className="center">
             <ChessBoard />
           </div>
+          <Footer />
         </>
       )}
     </div>

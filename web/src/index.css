@@ -8,9 +8,10 @@ body {
   margin: 0;
   font-family: system-ui, sans-serif;
   color: var(--text);
-
   background: var(--bg);
-  overflow: hidden;
+  /* remove overflow: hidden; */
+  overflow-x: hidden;
+  overflow-y: auto; /* allow scrolling */
   position: relative;
 }
 

@@ -1,0 +1,73 @@
+/* Footer.css – Full width bar, lunar theme */
+.footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: rgba(8, 10, 18, 0.75);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid rgba(245, 211, 138, 0.2);
+  padding: 16px 24px;
+  z-index: 20;
+  pointer-events: none; /* allow clicks to pass through to board */
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.footer-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  text-align: center;
+  pointer-events: auto; /* enable interactions for links */
+}
+
+.line {
+  color: rgba(230, 225, 215, 0.9);
+  font-size: 13px;
+  letter-spacing: 0.6px;
+  font-weight: 400;
+  font-family: 'Inter', monospace;
+  text-shadow: 0 0 6px rgba(245, 211, 138, 0.1);
+}
+
+.small {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.tiny {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.line + .line {
+  margin-top: 6px;
+}
+
+/* Optional: style for future links */
+.footer-inner a {
+  color: #f5d38a;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.footer-inner a:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .footer {
+    padding: 12px 16px;
+  }
+  .line {
+    font-size: 11px;
+  }
+  .small {
+    font-size: 10px;
+  }
+  .tiny {
+    font-size: 9px;
+  }
+}

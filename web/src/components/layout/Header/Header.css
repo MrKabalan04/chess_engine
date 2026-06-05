@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&family=Inter:wght@300;400;500&display=swap');
 .header {
   position: fixed;
   top: 0;
@@ -21,4 +22,5 @@
   text-shadow: 0 0 18px var(--moon-glow);
   user-select: none;
   font-weight: 300;
+  
 }
