@@ -7,10 +7,22 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
+# Node / Build directories
+node_modules/
+web/node_modules/
 dist
 dist-ssr
 *.local
+
+# Package management files (Root)
+package-lock.json
+package.json
+
+# Chess Engine Binaries & Builds
+*.exe
+Luna.exe
+Luna/Luna.exe
+Luna/chess_engine.exe
 
 # Editor directories and files
 .vscode/*

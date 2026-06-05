@@ -1,9 +1,12 @@
 #include "generateMoves.h"
 #include <chrono>
 #include <iostream>
+#include <sstream>
 #include <cstring>
 #include <cstdint>
 #include <climits>
+#include <algorithm>
+#include <cmath>
 #include "types.h"
 using namespace std;
 
@@ -76,8 +79,10 @@ void GenerateMoves::init() {
     static const int knightOffsets[8] = { 17,15,10,6,-17,-15,-10,-6 };
     static const int kingOffsets[8]   = { 8,-8,1,-1,9,7,-7,-9 };
 
-    memset(historyTable, 0, sizeof(historyTable));
-    memset(killerMoves,  0, sizeof(killerMoves));
+    memset(historyTable,    0, sizeof(historyTable));
+    memset(contHistTable,   0, sizeof(contHistTable));
+    memset(countermoveTable,0, sizeof(countermoveTable));
+    memset(killerMoves,     0, sizeof(killerMoves));
 
     for (int i = 0; i < 64; i++) {
         int col = i % 8;
@@ -321,6 +326,14 @@ int GenerateMoves::seeCapture(const Board& board, Move move) const
 // ─────────────────────────────────────────────────────────
 void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMove)
 {
+    // Get previous move info for countermove / continuation history
+    int prevPiece = -1, prevTo = -1;
+    if (board.undoCount > 0) {
+        const UndoInfo& prev = board.undoStack[board.undoCount - 1];
+        prevPiece = prev.movedPiece;
+        prevTo    = prev.move.getTo();
+    }
+
     int scores[256];
 
     for (int i = 0; i < moves.count; i++)
@@ -340,35 +353,44 @@ void GenerateMoves::orderMoves(MoveList& moves, Board& board, int ply, Move ttMo
 
         if (isCapture || isEP)
         {
-            // Use SEE to distinguish winning/losing captures
             int seeScore = isEP ? 0 : seeCapture(board, m);
             if (seeScore >= 0)
-                s = 1'000'000 + seeScore;   // winning/equal capture
+                s = 1'000'000 + seeScore;
             else
-                s = 500'000  + seeScore;    // losing capture — still above quiets but below killers
+                s = 500'000  + seeScore;
         }
         else if (m.getType() >= PROMOT_QUEEN)
         {
             s = 900'000 + (m.getType() == PROMOT_QUEEN ? 900 : 300);
         }
-        else if (ply < 32 && m.data == killerMoves[ply][0].data)
+        else if (ply < 64 && m.data == killerMoves[ply][0].data)
         {
             s = 800'000;
         }
-        else if (ply < 32 && m.data == killerMoves[ply][1].data)
+        else if (ply < 64 && m.data == killerMoves[ply][1].data)
         {
             s = 799'000;
         }
+        else if (prevPiece >= 0 && prevPiece < 7 && prevTo >= 0 &&
+                 countermoveTable[prevPiece][prevTo].data == m.data)
+        {
+            s = 798'000;  // countermove
+        }
         else
         {
-            int hIdx = m.getFrom() * 64 + m.getTo();
+            int hIdx  = m.getFrom() * 64 + m.getTo();
+            int curPiece = board.getPieceAt(m.getFrom());
+            if (curPiece < 0) curPiece = 0;
             s = historyTable[hIdx];
+            // Add continuation history bonus
+            if (prevPiece >= 0 && prevPiece < 7 && prevTo >= 0 && curPiece < 7)
+                s += contHistTable[prevPiece][prevTo][curPiece][m.getTo()];
         }
 
         scores[i] = s;
     }
 
-    // Insertion sort
+    // Insertion sort (fast enough for ≤256 moves)
     for (int i = 1; i < moves.count; i++)
     {
         Move m = moves.moves[i];
@@ -415,7 +437,13 @@ void GenerateMoves::orderCaptures(MoveList& list, const Board& board)
 void GenerateMoves::ageHistory()
 {
     for (int i = 0; i < 4096; ++i)
-        historyTable[i] >>= 2;   // divide by 4 (faster decay than /2)
+        historyTable[i] >>= 2;
+
+    // Decay continuation history — it's large so use a pointer sweep
+    int* p = &contHistTable[0][0][0][0];
+    int  n = sizeof(contHistTable) / sizeof(int);
+    for (int i = 0; i < n; ++i)
+        p[i] >>= 2;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -709,26 +737,243 @@ int GenerateMoves::evalFull(Board& board) const
     int mobility = evalMobility(board);  // piece mobility
     int safety   = evalKingSafety(board);// king attack scoring
 
-    // base is already from side-to-move perspective
-    // mobility and safety are from white's perspective, so flip if black to move
-    int bonus = mobility - safety;
+    // ── Mop-up: drive enemy king to corner when winning big in endgame ────
+    // Both mobility and safety are positive when good for white (white's POV).
+    // We combine them with +, then flip for black to move — same convention.
+    int mopup = 0;
+    {
+        int phase =
+            __builtin_popcountll(board.whiteKnights | board.blackKnights) * 1 +
+            __builtin_popcountll(board.whiteBishops | board.blackBishops) * 1 +
+            __builtin_popcountll(board.whiteRooks   | board.blackRooks)   * 2 +
+            __builtin_popcountll(board.whiteQueen   | board.blackQueen)   * 4;
+
+        // Only apply in endgame-ish positions (phase <= 12)
+        if (phase <= 12) {
+            int wMat = __builtin_popcountll(board.whitePawns)   * 100
+                     + __builtin_popcountll(board.whiteKnights) * 320
+                     + __builtin_popcountll(board.whiteBishops) * 330
+                     + __builtin_popcountll(board.whiteRooks)   * 500
+                     + __builtin_popcountll(board.whiteQueen)   * 900;
+            int bMat = __builtin_popcountll(board.blackPawns)   * 100
+                     + __builtin_popcountll(board.blackKnights) * 320
+                     + __builtin_popcountll(board.blackBishops) * 330
+                     + __builtin_popcountll(board.blackRooks)   * 500
+                     + __builtin_popcountll(board.blackQueen)   * 900;
+            int diff = wMat - bMat;
+
+            if (std::abs(diff) >= 200) {
+                int wk  = __builtin_ctzll(board.whiteKing);
+                int bk  = __builtin_ctzll(board.blackKing);
+                int wkr = wk >> 3, wkf = wk & 7;
+                int bkr = bk >> 3, bkf = bk & 7;
+
+                // Chebyshev distance between kings (winning king should be close)
+                int kingDist = std::max(std::abs(wkr - bkr), std::abs(wkf - bkf));
+
+                // Chebyshev distance of losing king from board centre.
+                // Corners return 7, true centre returns 1.
+                auto centerDist = [](int sq) -> int {
+                    int r = sq >> 3, f = sq & 7;
+                    return std::max(std::abs(2*r - 7), std::abs(2*f - 7));
+                };
+
+                if (diff > 0) {
+                    // White winning: push black king to corner, bring kings close
+                    mopup += centerDist(bk) * 10 + (7 - kingDist) * 5;
+                } else {
+                    // Black winning: push white king to corner
+                    mopup -= centerDist(wk) * 10 + (7 - kingDist) * 5;
+                }
+            }
+        }
+    }
+
+    // FIX: was `mobility - safety` — both are from white's POV (positive=good for
+    // white), so they must be added, not subtracted.  The minus sign was causing
+    // the engine to (a) ignore attacking the enemy king and (b) reward having its
+    // own king under fire.
+    int bonus = mobility + safety + mopup;
     if (board.sideToMove == 1) bonus = -bonus;
 
     return base + bonus;
 }
 
 // ─────────────────────────────────────────────────────────
-// QUIESCENCE SEARCH
+// OPENING BOOK
 // ─────────────────────────────────────────────────────────
+static std::string toUCI(Move m) {
+    std::string s;
+    s += "abcdefgh"[m.getFrom()%8];
+    s += "12345678"[m.getFrom()/8];
+    s += "abcdefgh"[m.getTo()%8];
+    s += "12345678"[m.getTo()/8];
+    if (m.getType()==PROMOT_QUEEN)  s+="q";
+    if (m.getType()==PROMOT_ROOK)   s+="r";
+    if (m.getType()==PROMOT_BISHOP) s+="b";
+    if (m.getType()==PROMOT_KNIGHT) s+="n";
+    return s;
+}
+
+void GenerateMoves::buildBook(Board& board) {
+    // Each line is a sequence of UCI moves from startpos.
+    // We record every prefix → next_move pair so Luna plays book moves
+    // as both white and black.
+    static const char* lines[] = {
+        // ── Ruy Lopez ────────────────────────────────────────────────
+        "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6 e1g1 f8e7 f1e1 b7b5 a4b3 d7d6 c2c3 e8g8",
+        "e2e4 e7e5 g1f3 b8c6 f1b5 g8f6 e1g1 f6e4 d2d4 f8e7 d1e2 d7d5",
+        "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5c6 d7c6 d2d4 e5d4 d1d4 d8d4 f3d4",
+        // ── Italian ──────────────────────────────────────────────────
+        "e2e4 e7e5 g1f3 b8c6 f1c4 f8c5 c2c3 g8f6 d2d4 e5d4 c3d4 c5b4 c1d2 b4d2 b1d2",
+        "e2e4 e7e5 g1f3 b8c6 f1c4 f8c5 e1g1 g8f6 d2d3 d7d6 c2c3 a7a6 a2a4",
+        "e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3 f8c5 c2c3 d7d6 e1g1 a7a5",
+        // ── Scotch ───────────────────────────────────────────────────
+        "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4 f3d4 f8c5 c1e3 d8f6 c2c3 g8e7",
+        "e2e4 e7e5 g1f3 b8c6 d2d4 e5d4 f3d4 g8f6 d4c6 b7c6 e4e5 d8e7 d1e2 f6d5 c2c4",
+        // ── Sicilian Najdorf ─────────────────────────────────────────
+        "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6 c1g5 e7e6 f2f4",
+        "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6 f1e2 e7e5 d4b3 f8e7 e1g1",
+        // ── Sicilian Dragon ──────────────────────────────────────────
+        "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 g7g6 c1e3 f8g7 f2f3 b8c6 d1d2 e8g8 e1c1",
+        // ── Sicilian Scheveningen ────────────────────────────────────
+        "e2e4 c7c5 g1f3 e7e6 d2d4 c5d4 f3d4 g8f6 b1c3 d7d6 f1e2 a7a6 e1g1 d8c7 f2f4",
+        // ── French ───────────────────────────────────────────────────
+        "e2e4 e7e6 d2d4 d7d5 b1c3 g8f6 c1g5 f8e7 e4e5 f6d7 g5e7 d8e7 f2f4 a7a6 g1f3 c7c5",
+        "e2e4 e7e6 d2d4 d7d5 b1d2 g8f6 e4e5 f6d7 f1d3 c7c5 c2c3 b8c6 g1e2 c5d4 c3d4",
+        "e2e4 e7e6 d2d4 d7d5 e4d5 e6d5 g1f3 g8f6 f1d3 f8d6 e1g1 e8g8 c2c3 b8c6 b1d2",
+        // ── Caro-Kann ────────────────────────────────────────────────
+        "e2e4 c7c6 d2d4 d7d5 b1c3 d5e4 c3e4 c8f5 e4g3 f5g6 h2h4 h7h6 g1f3 b8d7 h4h5 g6h7 f1d3",
+        "e2e4 c7c6 d2d4 d7d5 e4d5 c6d5 c2c4 g8f6 b1c3 e7e6 g1f3 f8e7 c4d5 e6d5",
+        // ── Pirc ─────────────────────────────────────────────────────
+        "e2e4 d7d6 d2d4 g8f6 b1c3 g7g6 f2f4 f8g7 g1f3 e8g8 f1d3 b8c6 e1g1",
+        // ── Queen's Gambit Declined ───────────────────────────────────
+        "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6 c1g5 f8e7 e2e3 e8g8 g1f3 b8d7 f1d3 d5c4 d3c4 c7c5",
+        "d2d4 d7d5 c2c4 e7e6 g1f3 g8f6 b1c3 f8e7 c1f4 e8g8 e2e3 c7c5 d4c5 b8c6 a2a3",
+        // ── Slav ─────────────────────────────────────────────────────
+        "d2d4 d7d5 c2c4 c7c6 g1f3 g8f6 b1c3 d5c4 a2a4 c8f5 e2e3 e7e6 f1c4",
+        "d2d4 d7d5 c2c4 c7c6 b1c3 g8f6 g1f3 e7e6 e2e3 a7a6 b2b3 b8d7 f1d3 d5c4 d3c4",
+        // ── QGA ──────────────────────────────────────────────────────
+        "d2d4 d7d5 c2c4 d5c4 g1f3 g8f6 e2e3 e7e6 f1c4 c7c5 e1g1 a7a6 d1e2 b8c6 d4c5",
+        // ── King's Indian Defence ────────────────────────────────────
+        "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7 e2e4 d7d6 g1f3 e8g8 f1e2 e7e5 e1g1 b8c6 d4d5 c6e7 f3e1",
+        "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7 e2e4 d7d6 g1f3 e8g8 f1e2 e7e5 d4d5 a7a5 f3d2 b8a6 e1g1",
+        // ── Nimzo-Indian ─────────────────────────────────────────────
+        "d2d4 g8f6 c2c4 e7e6 b1c3 f8b4 e2e3 b7b6 g1e2 c8a6 a2a3 b4c3 e2c3 d7d5 b2b3",
+        "d2d4 g8f6 c2c4 e7e6 b1c3 f8b4 d1c2 e8g8 a2a3 b4c3 c2c3 b7b6 c1g5",
+        // ── Queen's Indian ────────────────────────────────────────────
+        "d2d4 g8f6 c2c4 e7e6 g1f3 b7b6 g2g3 c8b7 f1g2 f8e7 e1g1 e8g8 b1c3 f6e4 d1c2 e4c3 c2c3",
+        // ── Grunfeld ─────────────────────────────────────────────────
+        "d2d4 g8f6 c2c4 g7g6 b1c3 d7d5 c4d5 f6d5 e2e4 d5c3 b2c3 f8g7 f1c4 c7c5 g1f3 e8g8",
+        "d2d4 g8f6 c2c4 g7g6 b1c3 d7d5 g1f3 f8g7 d1b3 d5c4 b3c4 e8g8 e2e4 c8g4 c1e3",
+        // ── Catalan ───────────────────────────────────────────────────
+        "d2d4 g8f6 c2c4 e7e6 g1f3 d7d5 g2g3 f8e7 f1g2 e8g8 e1g1 d5c4 d1c2 a7a6 c2c4",
+        // ── English ───────────────────────────────────────────────────
+        "c2c4 e7e5 b1c3 g8f6 g1f3 b8c6 g2g3 f8b4 f1g2 e8g8 e1g1 b4c3 b2c3 d7d6 d2d3",
+        "c2c4 g8f6 b1c3 e7e6 g1f3 d7d5 d2d4 f8e7 c1f4 e8g8 e2e3 c7c5 d4c5 f8e8",
+        // ── London ───────────────────────────────────────────────────
+        "d2d4 d7d5 g1f3 g8f6 c1f4 e7e6 e2e3 f8d6 f4d6 d8d6 b1d2 e8g8 f1d3 b8d7 e1g1 c7c5",
+        "d2d4 g8f6 g1f3 e7e6 c1f4 d7d5 e2e3 f8d6 f4d6 d8d6 b1d2 e8g8 f1d3 c7c5 c2c3",
+        // ── Replies as black ──────────────────────────────────────────
+        "e2e4 e7e5",       "e2e4 c7c5",       "e2e4 e7e6",
+        "e2e4 c7c6",       "e2e4 d7d6",       "e2e4 g8f6",
+        "d2d4 d7d5",       "d2d4 g8f6",       "d2d4 e7e6",
+        "c2c4 e7e5",       "c2c4 g8f6",       "c2c4 c7c5",
+        "g1f3 d7d5",       "g1f3 g8f6",       "g1f3 c7c5",
+        nullptr
+    };
+
+    board.initZobrist();
+    book.clear();
+
+    for (int l = 0; lines[l] != nullptr; l++) {
+        // Parse moves
+        std::vector<std::string> moves;
+        std::string mv;
+        std::istringstream iss(lines[l]);
+        while (iss >> mv) moves.push_back(mv);
+        if (moves.empty()) continue;
+
+        // Replay prefix 0..i, record position hash → moves[i+1]
+        board.init();
+
+        // ── Record startpos → moves[0] ──────────────────────
+        // The loop below only records "after move i → move i+1".
+        // We must also record the very first move from the start position.
+        {
+            uint64_t startHash = board.zobristHash;
+            MoveList legalStart = generateLegalMoves(board, board.sideToMove);
+            for (int j = 0; j < legalStart.count; j++) {
+                if (toUCI(legalStart.moves[j]) == moves[0]) {
+                    auto& vec = book[startHash];
+                    bool dup = false;
+                    for (auto& e : vec) if (e.moveData == legalStart.moves[j].data) { dup = true; break; }
+                    if (!dup) vec.push_back({legalStart.moves[j].data, 200});
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < (int)moves.size() - 1; i++) {
+            // Play move i
+            MoveList legal = generateLegalMoves(board, board.sideToMove);
+            bool found = false;
+            for (int j = 0; j < legal.count; j++) {
+                if (toUCI(legal.moves[j]) == moves[i]) {
+                    board.makeMove(legal.moves[j]);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) break;
+
+            // Record: in this position, play moves[i+1]
+            uint64_t hash = board.zobristHash;
+            MoveList legal2 = generateLegalMoves(board, board.sideToMove);
+            for (int j = 0; j < legal2.count; j++) {
+                if (toUCI(legal2.moves[j]) == moves[i+1]) {
+                    auto& vec = book[hash];
+                    bool dup = false;
+                    for (auto& e : vec) if (e.moveData == legal2.moves[j].data) { dup = true; break; }
+                    if (!dup) vec.push_back({legal2.moves[j].data, 200});
+                    break;
+                }
+            }
+        }
+    }
+
+    board.init();
+    bookLoaded = true;
+    std::cout << "info string Opening book loaded: " << book.size() << " positions\n";
+}
+
+Move GenerateMoves::probeBook(const Board& board) const {
+    if (!bookLoaded) return Move(0,0,NORMAL);
+    auto it = book.find(board.zobristHash);
+    if (it == book.end() || it->second.empty()) return Move(0,0,NORMAL);
+
+    // Pick highest-weight move; ties broken by whichever appears first (insertion order = higher frequency)
+    const auto& vec = it->second;
+    int best = 0;
+    for (int i = 1; i < (int)vec.size(); i++)
+        if (vec[i].weight > vec[best].weight) best = i;
+
+    Move m; m.data = vec[best].moveData;
+    return m;
+}
+
+
 int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
 {
     nodesSearched++;
 
-    if ((nodesSearched & 1023) == 0)
+    if ((nodesSearched & 255) == 0)
         checkTimeBudget();
 
     if (searchAborted) return 0;
-    if (board.isThreefoldRepetition()) return 0;
+    if (board.isInsufficientMaterial()) return 0;
+    if (board.halfMoveClock >= 100) return 0;
+    if (board.isThreefoldRepetition()) return -10;
 
     int standPat = evalFull(board);
     if (standPat >= beta) return beta;
@@ -783,32 +1028,33 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 {
     nodesSearched++;
 
-    if ((nodesSearched & 1023) == 0)
+    if ((nodesSearched & 255) == 0)
         checkTimeBudget();
 
     if (searchAborted) return 0;
 
-    // Draw detection
-    if (ply > 0 && board.isThreefoldRepetition()) return 0;
+    // ── Draw detection ────────────────────────────────────
+    if (board.isInsufficientMaterial()) return 0;
+    if (board.halfMoveClock >= 100) return 0;
+    if (ply > 0 && board.isThreefoldRepetition()) return -10;
 
     int originalAlpha = alpha;
-    bool isPV = (beta - alpha) > 1; // PV node has a full window
+    bool isPV  = (beta - alpha) > 1;
+    bool isRoot = (ply == 0);
 
     // ── TT Probe ──────────────────────────────────────────
-    int ttIndex = board.zobristHash % TT_SIZE;
+    int ttIndex = (int)(board.zobristHash % TT_SIZE);
     TTEntry& ttEntry = transpositionTable[ttIndex];
     Move ttMove(0, 0, NORMAL);
 
     if (ttEntry.zobristHash == board.zobristHash)
     {
         ttMove = ttEntry.bestMove;
-
-        if (ttEntry.depth >= depth)
+        if (!isRoot && ttEntry.depth >= depth)
         {
             int s = ttEntry.score;
             if (s >  90000) s -= ply;
             if (s < -90000) s += ply;
-
             if (ttEntry.flag == EXACT)               return s;
             if (ttEntry.flag == ALPHA && s <= alpha) return alpha;
             if (ttEntry.flag == BETA  && s >= beta)  return beta;
@@ -822,16 +1068,14 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     bool inCheck = isInCheck(board, board.sideToMove);
     if (inCheck) depth++;
 
-    // ── Static eval (used by pruning techniques) ──────────
+    // ── Static eval ───────────────────────────────────────
     int staticEval = evalFull(board);
 
-    // ── Reverse Futility Pruning (Static Null Move) ───────
-    // If static eval beats beta by a big margin, we're probably too good — cut off
-    if (!inCheck && !isPV && depth >= 1 && depth <= 6)
+    // ── Reverse Futility Pruning ──────────────────────────
+    if (!inCheck && !isPV && depth >= 1 && depth <= 8)
     {
-        int rfpMargin = 120 * depth;
-        if (staticEval - rfpMargin >= beta)
-            return staticEval - rfpMargin;
+        if (staticEval - 80 * depth >= beta)
+            return staticEval - 80 * depth;
     }
 
     // ── Null Move Pruning ──────────────────────────────────
@@ -844,22 +1088,27 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
         if (bigPieces >= 1)
         {
-            int R = 3 + (depth >= 6 ? 1 : 0);
+            int R = 3 + depth / 4 + std::min(3, (staticEval - beta) / 150);
             board.makeNullMove();
             int nullScore = -negamax(board, depth - 1 - R, -beta, -beta + 1, ply + 1);
             board.undoNullMove();
-
-            if (!searchAborted && nullScore >= beta)
-                return beta;
+            if (!searchAborted && nullScore >= beta) return beta;
         }
+    }
+
+    // ── IID: Internal Iterative Deepening ─────────────────
+    if (isPV && depth >= 6 && ttMove.data == 0)
+    {
+        negamax(board, depth - 4, alpha, beta, ply);
+        if (searchAborted) return 0;
+        if (transpositionTable[ttIndex].zobristHash == board.zobristHash)
+            ttMove = transpositionTable[ttIndex].bestMove;
     }
 
     // ── Move generation ───────────────────────────────────
     MoveList moves;
     generateAllMoves(board, board.sideToMove, moves);
 
-    // Validate TT move — only use it if it's actually in the generated list
-    // A stale/colliding TT entry can produce a completely bogus move
     {
         bool ttValid = false;
         for (int i = 0; i < moves.count; i++)
@@ -872,22 +1121,35 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     int  bestScore  = -9999999;
     Move bestMove(0, 0, NORMAL);
     int  legalCount = 0;
+    int  quietCount = 0;
     int  side       = board.sideToMove;
     int  opponent   = side ^ 1;
+
+    int prevPiece = -1, prevTo = -1;
+    if (board.undoCount > 0) {
+        const UndoInfo& prev = board.undoStack[board.undoCount - 1];
+        prevPiece = prev.movedPiece; if (prevPiece < 0) prevPiece = 0;
+        prevTo    = prev.move.getTo();
+    }
 
     for (int i = 0; i < moves.count; i++)
     {
         Move move = moves.moves[i];
 
-        // ── Compute move flags BEFORE makeMove ────────────
         bool isCapture   = ((board.occupied >> move.getTo()) & 1ULL) != 0
                         || move.getType() == EN_PASSANT;
         bool isPromotion = move.getType() >= PROMOT_QUEEN;
         bool isQuiet     = !isCapture && !isPromotion;
 
+        // ── Late Move Pruning (LMP) ────────────────────────
+        if (!inCheck && isQuiet && !isPV && depth <= 5 && legalCount > 0)
+        {
+            static const int lmpCount[] = {0, 8, 12, 18, 26, 36};
+            if (quietCount >= lmpCount[depth]) continue;
+        }
+
         board.makeMove(move);
 
-        // Skip illegal moves (king left in check) — MUST happen before any pruning
         int kingSq = (side == 0)
             ? __builtin_ctzll(board.whiteKing)
             : __builtin_ctzll(board.blackKing);
@@ -899,15 +1161,21 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         }
 
         legalCount++;
+        if (isQuiet) quietCount++;
+
+        int movedPiece = board.undoStack[board.undoCount-1].movedPiece;
+        if (movedPiece < 0) movedPiece = 0;
 
         // ── Futility Pruning ──────────────────────────────
-        // Only prune AFTER we know the move is legal
-        if (!inCheck && isQuiet && legalCount > 1 && depth <= 3 && !isPV)
+        if (!inCheck && isQuiet && legalCount > 1 && depth <= 5 && !isPV)
         {
-            static const int futilityMargin[] = { 0, 150, 300, 500 };
+            static const int futilityMargin[] = { 0, 100, 200, 300, 450, 600 };
             if (staticEval + futilityMargin[depth] <= alpha)
             {
                 board.undoMove();
+                int hIdx = move.getFrom() * 64 + move.getTo();
+                historyTable[hIdx] -= depth;
+                if (historyTable[hIdx] < -1'000'000) historyTable[hIdx] = -1'000'000;
                 continue;
             }
         }
@@ -915,19 +1183,20 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         int score;
 
         // ── Late Move Reductions (LMR) ─────────────────────
-        if (!inCheck && depth >= 3 && legalCount > 3 && isQuiet)
+        if (!inCheck && depth >= 3 && legalCount > 2 && isQuiet)
         {
-            // Scale reduction with depth and move count
-            int R = 1;
-            if (legalCount > 6)  R = 2;
-            if (legalCount > 12) R = 3;
-            if (depth >= 8)      R++;
-            R = std::min(R, depth - 2); // never reduce into qsearch directly
+            int R = (int)(0.75 + log((double)depth) * log((double)legalCount) / 2.5);
+            if (!isPV) R++;
+            R = std::max(1, std::min(R, depth - 2));
 
             score = -negamax(board, depth - 1 - R, -alpha - 1, -alpha, ply + 1);
-
-            // Full re-search if LMR move beats alpha
             if (score > alpha)
+                score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
+        }
+        else if (legalCount > 1 && isPV)
+        {
+            score = -negamax(board, depth - 1, -alpha - 1, -alpha, ply + 1);
+            if (score > alpha && score < beta)
                 score = -negamax(board, depth - 1, -beta, -alpha, ply + 1);
         }
         else
@@ -936,36 +1205,53 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         }
 
         board.undoMove();
-
         if (searchAborted) return 0;
 
-        if (score > bestScore)
-        {
-            bestScore = score;
-            bestMove  = move;
-        }
+        if (score > bestScore) { bestScore = score; bestMove = move; }
 
         if (score > alpha)
         {
             alpha = score;
-
             if (isQuiet)
             {
-                int hIdx = move.getFrom() * 64 + move.getTo();
-                historyTable[hIdx] += depth * depth;
-                if (historyTable[hIdx] > 1'000'000)
-                    historyTable[hIdx] = 1'000'000;
+                int bonus = depth * depth;
+                int hIdx  = move.getFrom() * 64 + move.getTo();
+                historyTable[hIdx] += bonus;
+                if (historyTable[hIdx] > 1'000'000) historyTable[hIdx] = 1'000'000;
+                if (prevPiece >= 0 && prevPiece < 7 && movedPiece < 7)
+                    contHistTable[prevPiece][prevTo][movedPiece][move.getTo()] += bonus;
             }
         }
 
         if (alpha >= beta)
         {
-            if (isQuiet && ply < 32)
+            if (isQuiet)
             {
-                if (killerMoves[ply][0].data != move.data)
+                if (ply < 64 && killerMoves[ply][0].data != move.data)
                 {
                     killerMoves[ply][1] = killerMoves[ply][0];
                     killerMoves[ply][0] = move;
+                }
+                if (prevPiece >= 0 && prevPiece < 7 && movedPiece < 7)
+                    countermoveTable[prevPiece][prevTo] = move;
+
+                // History malus for quiets searched before the cutoff
+                int bonus = depth * depth;
+                for (int j = 0; j < i; j++) {
+                    Move prev2 = moves.moves[j];
+                    // Only apply malus to quiet moves (no captures, no promotions)
+                    // We can safely check the type; captures have getType()==EN_PASSANT
+                    // or target square was occupied — use the move type flags only
+                    bool prevIsQuiet = (prev2.getType() != EN_PASSANT)
+                                    && (prev2.getType() < PROMOT_QUEEN);
+                    // Also skip if it was a capture (target had a piece before we made it)
+                    // Since board is restored, occupied reflects the original position
+                    bool prevWasCapture = (board.occupied >> prev2.getTo()) & 1ULL;
+                    if (prevIsQuiet && !prevWasCapture) {
+                        int hIdx2 = prev2.getFrom() * 64 + prev2.getTo();
+                        historyTable[hIdx2] -= bonus;
+                        if (historyTable[hIdx2] < -1'000'000) historyTable[hIdx2] = -1'000'000;
+                    }
                 }
             }
             break;
@@ -982,11 +1268,17 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
         if (bestScore <= originalAlpha) flag = ALPHA;
         else if (bestScore >= beta)     flag = BETA;
 
-        ttEntry.zobristHash = board.zobristHash;
-        ttEntry.score       = bestScore;
-        ttEntry.depth       = depth;
-        ttEntry.flag        = flag;
-        ttEntry.bestMove    = bestMove;
+        if (ttEntry.zobristHash != board.zobristHash ||
+            ttEntry.depth <= depth ||
+            ttEntry.age != searchAge)
+        {
+            ttEntry.zobristHash = board.zobristHash;
+            ttEntry.score       = bestScore;
+            ttEntry.depth       = depth;
+            ttEntry.flag        = flag;
+            ttEntry.bestMove    = bestMove;
+            ttEntry.age         = searchAge;
+        }
     }
 
     return bestScore;
@@ -997,25 +1289,91 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 // ─────────────────────────────────────────────────────────
 Move GenerateMoves::getBestMove(Board& board, int maxDepth,
                                  long long myTimeLeftMs,
-                                 long long incrementMs, int movesToGo)
+                                 long long incrementMs, int movesToGo,
+                                 long long movetimeMs)
 {
-    if (myTimeLeftMs <= 0) myTimeLeftMs = 5000;
-    if (movesToGo    <= 0) movesToGo    = 40;
+    // ── Opening Book Probe ────────────────────────────────
+    if (bookLoaded && gamePly < 30) {
+        Move bookMove = probeBook(board);
+        if (bookMove.data != 0) {
+            // Validate it's legal before playing
+            MoveList legal = generateLegalMoves(board, board.sideToMove);
+            for (int i = 0; i < legal.count; i++) {
+                if (legal.moves[i].data == bookMove.data) {
+                    std::cout << "info string Book move: " << toUCI(bookMove) << "\n";
+                    return bookMove;
+                }
+            }
+        }
+    }
 
-    timeLimitMs = (myTimeLeftMs / (movesToGo + 5)) + (long long)(incrementMs * 0.75);
-    if (timeLimitMs > 8000)                             timeLimitMs = 8000;
-    if (timeLimitMs > (long long)(myTimeLeftMs * 0.75)) timeLimitMs = (long long)(myTimeLeftMs * 0.75);
-    if (timeLimitMs < 20)                               timeLimitMs = 20;
+    // ── Time Management ───────────────────────────────────
+    if (movetimeMs > 0) {
+        // Fixed time per move ("go movetime X") — use with small safety buffer
+        timeLimitMs = movetimeMs - 20;
+        if (timeLimitMs < 5) timeLimitMs = 5;
+    } else {
+        // Tournament / sudden-death clock.
+        if (myTimeLeftMs <= 0) myTimeLeftMs = 1000;
+
+        // Critical: keep a safety buffer so we never flag
+        long long safeTime = myTimeLeftMs - 100;  // always keep 100ms in reserve
+        if (safeTime < 50) safeTime = 50;
+
+        long long baseTime;
+        if (movesToGo > 0) {
+            baseTime = safeTime / (movesToGo + 2);
+        } else {
+            int estimatedMovesLeft = std::max(10, 45 - gamePly / 2);
+            baseTime = safeTime / (estimatedMovesLeft + 2);
+        }
+
+        // Add 80% of increment
+        baseTime += (long long)(incrementMs * 0.8);
+
+        // Phase multiplier
+        double phaseMultiplier = 1.0;
+        if      (gamePly < 10)  phaseMultiplier = 0.7;
+        else if (gamePly < 20)  phaseMultiplier = 1.15;
+        else if (gamePly < 40)  phaseMultiplier = 1.05;
+        else                    phaseMultiplier = 0.9;
+
+        timeLimitMs = (long long)(baseTime * phaseMultiplier);
+
+        // Hard cap: never burn more than 15% of remaining safe time on one move
+        long long hardCap = (long long)(safeTime * 0.15);
+        if (timeLimitMs > hardCap)  timeLimitMs = hardCap;
+
+        // Absolute ceiling
+        if (timeLimitMs > 8000) timeLimitMs = 8000;
+
+        // Graduated emergency floor — scales with available time
+        long long minTime = std::min((long long)50, safeTime / 10);
+        if (timeLimitMs < minTime) timeLimitMs = minTime;
+
+        // Emergency throttle tiers
+        if (myTimeLeftMs < 3000) timeLimitMs = std::min(timeLimitMs, myTimeLeftMs / 6);
+        if (myTimeLeftMs < 1000) timeLimitMs = std::min(timeLimitMs, (long long)100);
+        if (myTimeLeftMs < 300)  timeLimitMs = 30;
+        if (myTimeLeftMs < 100)  timeLimitMs = 10;
+    }
 
     searchStartTime = std::chrono::high_resolution_clock::now();
     searchAborted   = false;
     nodesSearched   = 0;
+    searchAge++;  // age TT entries so replacement prefers fresh data
 
     memset(killerMoves, 0, sizeof(killerMoves));
     ageHistory();
 
     MoveList legalRootMoves = generateLegalMoves(board, board.sideToMove);
     if (legalRootMoves.count == 0) return Move(0, 0, NORMAL);
+
+    // Instant move: only one legal move, no need to search
+    if (legalRootMoves.count == 1) {
+        std::cout << "info depth 1 score cp 0 time 1 nodes 1 nps 1000\n";
+        return legalRootMoves.moves[0];
+    }
 
     Move absoluteBestMove = legalRootMoves.moves[0];
 
@@ -1034,28 +1392,40 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
     for (int currentDepth = 1; currentDepth <= maxDepth; currentDepth++)
     {
         // ── Aspiration Windows ────────────────────────────
-        int delta = 50;
+        int delta = 25;
         int alpha = (currentDepth >= 4) ? prevScore - delta : -999999;
         int beta  = (currentDepth >= 4) ? prevScore + delta :  999999;
 
         Move bestMoveThisDepth  = absoluteBestMove;
         int  bestScoreThisDepth = -999999;
+        int  aspirationFails    = 0;
 
         while (true)
         {
+            checkTimeBudget();
+            if (searchAborted) goto done;
+
             bestScoreThisDepth = -999999;
             bestMoveThisDepth  = absoluteBestMove;
+
+            // Re-order so the current best candidate is searched first.
+            orderMoves(legalRootMoves, board, 0, bestMoveThisDepth);
 
             for (int i = 0; i < legalRootMoves.count; i++)
             {
                 Move move = legalRootMoves.moves[i];
                 board.makeMove(move);
 
-                // Full window for every root move — correct and simple
-                int score = -negamax(board, currentDepth - 1, -beta, -alpha, 1);
+                int score;
+                if (i == 0) {
+                    score = -negamax(board, currentDepth - 1, -beta, -alpha, 1);
+                } else {
+                    score = -negamax(board, currentDepth - 1, -alpha - 1, -alpha, 1);
+                    if (!searchAborted && score > alpha && score < beta)
+                        score = -negamax(board, currentDepth - 1, -beta, -alpha, 1);
+                }
                 board.undoMove();
 
-                checkTimeBudget();
                 if (searchAborted) goto done;
 
                 if (score > bestScoreThisDepth)
@@ -1063,32 +1433,29 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
                     bestScoreThisDepth = score;
                     bestMoveThisDepth  = move;
                 }
-                if (score > alpha)
-                    alpha = score;
-                if (alpha >= beta) break;
+                if (score > alpha) alpha = score;
             }
 
             if (searchAborted) goto done;
 
-            // Widen window and retry on fail-low or fail-high
+            // Widen window on fail — with a hard cap on retries
             if (bestScoreThisDepth <= prevScore - delta)
             {
-                alpha  = bestScoreThisDepth - delta;
+                alpha = bestScoreThisDepth - delta;
                 delta *= 2;
-                if (alpha < -999999) alpha = -999999;
+                aspirationFails++;
+                if (aspirationFails >= 4 || alpha <= -999999) { alpha = -999999; beta = 999999; }
             }
             else if (bestScoreThisDepth >= prevScore + delta)
             {
-                beta   = bestScoreThisDepth + delta;
+                beta  = bestScoreThisDepth + delta;
                 delta *= 2;
-                if (beta > 999999) beta = 999999;
+                aspirationFails++;
+                if (aspirationFails >= 4 || beta >= 999999) { alpha = -999999; beta = 999999; }
             }
-            else
-            {
-                break; // Score inside window — done
-            }
+            else break;  // score inside window — done
 
-            if (alpha <= -999999 && beta >= 999999) break;
+            if (alpha <= -999999 && beta >= 999999) break;  // full window, no point retrying
         }
 
         absoluteBestMove = bestMoveThisDepth;
@@ -1110,19 +1477,34 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - searchStartTime).count();
         if (elapsed == 0) elapsed = 1;
 
+        // Report mate scores properly
+        std::string scoreStr;
+        if (bestScoreThisDepth > 90000)
+            scoreStr = "mate " + std::to_string((99000 - bestScoreThisDepth + 1) / 2);
+        else if (bestScoreThisDepth < -90000)
+            scoreStr = "mate -" + std::to_string((99000 + bestScoreThisDepth + 1) / 2);
+        else
+            scoreStr = "cp " + std::to_string(bestScoreThisDepth);
+
         std::cout << "info depth "  << currentDepth
-                  << " score cp "   << bestScoreThisDepth
+                  << " score "      << scoreStr
                   << " time "       << elapsed
                   << " nodes "      << nodesSearched
                   << " nps "        << (nodesSearched * 1000 / elapsed)
                   << std::endl;
 
-        if (legalRootMoves.count == 1) break;
-
-        // Don't start a new depth if we've used more than 60% of time budget
         auto elapsedNow = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - searchStartTime).count();
-        if (elapsedNow >= timeLimitMs * 6 / 10) break;
+
+        // Hard abort if we're already over 90% of budget (shouldn't happen but safety net)
+        if (elapsedNow >= timeLimitMs * 90 / 100) break;
+
+        // Soft stop: don't start a new depth if we've used 50% of budget
+        // (the next depth will take ~2-3x as long as the current one)
+        if (elapsedNow >= timeLimitMs * 50 / 100) break;
+
+        // If score is a mate, no need to search deeper
+        if (bestScoreThisDepth > 90000 || bestScoreThisDepth < -90000) break;
     }
 
 done:

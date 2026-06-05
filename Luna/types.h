@@ -55,6 +55,7 @@ struct UndoInfo {
     int capturedPiece;
     uint8_t castlingRights;
     int enPassantSquare;
+    int halfMoveClock;
     uint64_t zobristHash;
 };
 

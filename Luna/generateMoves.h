@@ -5,13 +5,32 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <unordered_map>
+#include <vector>
+#include <string>
 
 using namespace std;
 
 class Board;
 
+// ─────────────────────────────────────────────────────────
+// OPENING BOOK ENTRY
+// ─────────────────────────────────────────────────────────
+struct BookEntry {
+    uint16_t moveData;  // Move::data
+    uint8_t  weight;    // higher = preferred
+};
+
 class GenerateMoves {
 public:
+  // ── Opening book ─────────────────────────────────────
+  std::unordered_map<uint64_t, std::vector<BookEntry>> book;
+  bool bookLoaded = false;
+  void buildBook(Board& board);
+  Move probeBook(const Board& board) const;
+
+  // ── Move counter (tracks full-game ply count) ────────
+  int gamePly = 0;   // incremented by uci.cpp on each move played
   static const uint64_t COLUMN_A = 0x0101010101010101ULL;
   static const uint64_t COLUMN_H = 0x8080808080808080ULL;
   static const uint64_t ROW_1 = 0x00000000000000FFULL;
@@ -19,13 +38,15 @@ public:
   static const uint64_t ROW_7 = 0x00FF000000000000ULL;
   static const uint64_t ROW_8 = 0xFF00000000000000ULL;
   uint8_t searchAge = 0;
-  // History table: [from][to]
-  int historyTable[4096];
+  // History tables
+  int historyTable[4096];               // main butterfly history [from*64+to]
+  int contHistTable[7][64][7][64];      // continuation history [prevPiece][prevTo][piece][to]
+  Move countermoveTable[7][64];         // countermove [prevPiece][prevTo]
 
   bool searchAborted = false;
   uint64_t nodesSearched = 0;
 
-  long long timeLimitMs; // Make sure this is declared here
+  long long timeLimitMs;
   std::chrono::time_point<std::chrono::high_resolution_clock> searchStartTime;
 
 void checkTimeBudget()
@@ -47,9 +68,9 @@ void checkTimeBudget()
         .count();
   }
 
-  static const int TT_SIZE = 1 << 21;
+  static const int TT_SIZE = 1 << 22;  // 4M entries ~96MB — good balance
   static TTEntry transpositionTable[TT_SIZE];
-  Move killerMoves[32][2];
+  Move killerMoves[64][2];
 
   // Precomputed move masks for each piece type and square
   uint64_t knightMasks[64];
@@ -121,7 +142,8 @@ void checkTimeBudget()
   bool isCheckmate(Board &board, int side);
   bool isStalemate(Board &board, int side);
   Move getBestMove(Board &board, int maxDepth, long long myTimeLeftMs = 5000,
-                   long long incrementMs = 0, int movesToGo = 40);
+                   long long incrementMs = 0, int movesToGo = 40,
+                   long long movetimeMs = -1);
   void orderMoves(MoveList& moves, Board& board, int ply, Move ttMove);
   void orderCaptures(MoveList &list, const Board &board);
 
@@ -129,11 +151,10 @@ void checkTimeBudget()
   int quiescence(Board& board, int alpha, int beta, int ply);
   void generateCaptures(const Board &board, int side, MoveList &list);
 
-  // SEE — Static Exchange Evaluation
-  int see(const Board& board, int toSq, int target, int fromSq, int atter) const;
+  // SEE
   int seeCapture(const Board& board, Move move) const;
 
-  // Mobility evaluation (called from board evaluate via friend or passed in)
+  // Evaluation
   int evalMobility(const Board& board) const;
   int evalKingSafety(const Board& board) const;
   int evalFull(Board& board) const;

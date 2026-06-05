@@ -1,22 +1,59 @@
 .chess-board {
   display: grid;
-  grid-template-columns: repeat(8, 50px);
-  grid-template-rows: repeat(8, 50px);
+  grid-template-columns: repeat(8, 65px);
+  grid-template-rows: repeat(8, 65px);
+
+  border: 4px solid #2d2620;
+  border-radius: 8px;
+  overflow: hidden;
+
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
 }
 
 .square {
-  width: 50px;
-  height: 50px;
   display: flex;
   justify-content: center;
   align-items: center;
+  cursor: pointer;
   user-select: none;
+
+  transition: all 0.15s ease;
 }
 
-.square-light {
-  background-color: #f0d9b5; 
+.square:hover {
+  filter: brightness(1.1);
 }
 
-.square-dark {
-  background-color: #b58863; 
+.square:active {
+  transform: scale(0.97);
+  filter: brightness(0.95);
+}
+
+.square.light {
+  background-color: #f0d9b5;
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.03),
+    rgba(0, 0, 0, 0.03)
+  );
+}
+
+.square.dark {
+  background-color: #b58863;
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.04),
+    rgba(0, 0, 0, 0.04)
+  );
+}
+
+.square.selected {
+  background-color: #cdd26a !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.35);
+}
+
+.piece {
+  width: 90%;
+  height: 90%;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }

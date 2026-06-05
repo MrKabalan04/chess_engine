@@ -39,10 +39,12 @@ void GenerateMoves::initPawnAttacks()
             pawnToMasks[0][sq] |= (1ULL << (sq - 7));
 
         // BLACK pawn attackers TO square
-        if ((bit & ~FILE_H) && sq <= 54)
+        // sq+7 goes upper-left (lower file): attacker pawn can't be on FILE_A
+        if ((bit & ~FILE_A) && sq <= 54)
             pawnToMasks[1][sq] |= (1ULL << (sq + 7));
 
-        if ((bit & ~FILE_A) && sq <= 55)
+        // sq+9 goes upper-right (higher file): attacker pawn can't be on FILE_H
+        if ((bit & ~FILE_H) && sq <= 55)
             pawnToMasks[1][sq] |= (1ULL << (sq + 9));
     }
 }

@@ -2,6 +2,7 @@
 #define BOARD_H
 
 #include <cstdint>
+#include <string>
 #include "types.h"
 
 class Board {
@@ -36,12 +37,14 @@ public:
     int sideToMove = 0; // 0 = white, 1 = black
     int enPassantSquare = -1;
     uint8_t castlingRights = 0;
+    int halfMoveClock = 0;   // 50-move rule counter
     uint64_t positionHistory[500];
     int historyCount = 0;
     uint64_t zobristHash = 0;
 
     // ===== FUNCTIONS =====
     void init();
+    bool initFromFen(const std::string& fen);
     void printBoard();
     void clearBoard();
     void updateOccupancy();
@@ -62,6 +65,7 @@ public:
     bool isOccupied(int sq) const;
     void initZobrist();
     bool isThreefoldRepetition() const;
+    bool isInsufficientMaterial() const;
     void undoMove();
 
     uint64_t zobristTable[6][2][64];  // piece, color, type, square
