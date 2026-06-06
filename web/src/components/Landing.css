@@ -20,6 +20,7 @@
   transform: translateY(20px);
   transition: opacity 1.2s ease, transform 1.2s ease;
   margin-bottom: 20px;
+  user-select: none;
 }
 
 .title-container.visible {

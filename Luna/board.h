@@ -67,6 +67,7 @@ public:
     bool isThreefoldRepetition() const;
     bool isInsufficientMaterial() const;
     void undoMove();
+    std::string getFen() const;
 
     uint64_t zobristTable[6][2][64];  // piece, color, type, square
     uint64_t zobristSideToMove;    // 1 number for side

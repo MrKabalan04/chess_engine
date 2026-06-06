@@ -1,0 +1,43 @@
+/* MoveHistory.css */
+.move-history {
+  background: rgba(10, 12, 21, 0.7);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 12px;
+  width: 260px;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid rgba(245, 211, 138, 0.2);
+  font-family: 'Inter', monospace;
+  user-select: none;
+}
+
+.move-history h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: #f5d38a;
+  text-align: center;
+  user-select: none;
+}
+
+.move-history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.move-history th, .move-history td {
+  padding: 6px 4px;
+  text-align: center;
+  border-bottom: 1px solid rgba(245, 220, 160, 0.2);
+}
+
+.move-history th {
+  color: #c0d0e0;
+  font-weight: 500;
+}
+
+.move-history td {
+  color: #ddd;
+}

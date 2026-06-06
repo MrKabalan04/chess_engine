@@ -204,6 +204,50 @@ void Board::removePiece(int sq, int pieceType, bool isWhite) {
 }
 
 
+// =========================
+// ToFen
+// =========================
+
+std::string Board::getFen() const{
+    int count = 0;
+    std::string fen = "";
+    for(int rank = 7; rank >= 0; rank--){
+        for(int file = 0; file < 8; file++){
+            int sq = rank * 8 + file;
+            int piece = getPieceAt(sq);
+            if(piece == -1){
+                count++;
+            } else {
+                if(count > 0){
+                    fen += std::to_string(count);
+                    count = 0;
+                }
+                bool isWhite = (whitePieces >> sq) & 1ULL;
+                char c;
+                switch(piece){
+                    case PAWN:   c = 'p'; break;
+                    case KNIGHT: c = 'n'; break;
+                    case BISHOP: c = 'b'; break;
+                    case ROOK:   c = 'r'; break;
+                    case QUEEN:  c = 'q'; break;
+                    case KING:   c = 'k'; break;
+                    default:     c = '?';
+                }
+                fen += isWhite ? toupper(c) : c;
+            }
+            
+        }
+        
+        if(count > 0){
+            fen += std::to_string(count);
+            count = 0;
+        }
+        if(rank > 0) fen += '/';
+    }
+    fen += (sideToMove == 0) ? " w " : " b ";
+    return fen;
+}
+
 
 // =========================
 // INIT START POSITION
@@ -610,12 +654,6 @@ void Board::undoMove()
 // EVALUATION
 // =========================
 
-// PSTs are indexed by square where sq=0 is a1 (bottom-left).
-// Rows go: rank1=indices[0..7], rank2=[8..15], ..., rank8=[56..63].
-// For WHITE we use sq directly.
-// For BLACK we mirror vertically: sq ^ 56 (flips rank, keeps file).
-
-// ===== PIECE-SQUARE TABLES (White's perspective, rank1 at index 0) =====
 
     // Pawn: discourage backward pawns, reward center and advancement
     static const int pawnMG[64] = {
