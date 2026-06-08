@@ -22,6 +22,9 @@ import CaptureMoveAudio from "../assets/sounds/CaptureMoveAudio.mp3";
 import CheckMoveAudio from "../assets/sounds/CheckMoveAudio.mp3";
 import IllegalMoveAudio from "../assets/sounds/IllegalMoveAudio.mp3";
 import MoveAudio from "../assets/sounds/MoveAudio.mp3";
+import PromotionAudio from "../assets/sounds/PromotionAudio.mp3";
+import CheckMateAudio from "../assets/sounds/CheckMateAudio.mp3";
+import CastlingAudio from "../assets/sounds/CastlingAudio.mp3";
 
 const pieces = {
   white_pawn: WhitePawn,
@@ -50,6 +53,16 @@ function getPieceValue(pieceKey) {
     default: return 0;
   }
 }
+
+const soundMap = {
+    move: new Audio(MoveAudio),
+    capture: new Audio(CaptureMoveAudio),
+    check: new Audio(CheckMoveAudio),
+    illegal: new Audio(IllegalMoveAudio),
+    castle: new Audio(CastlingAudio),
+    checkmate: new Audio(CheckMateAudio),
+    promotion: new Audio(PromotionAudio),
+};
 
 function ChessBoard() {
   const [board, setBoard] = useState(
@@ -198,15 +211,15 @@ function ChessBoard() {
     }, 100);
   }
 
-  function playSound(type) {
-    const sounds = {
-      move : new Audio(MoveAudio),
-      capture: new Audio(CaptureMoveAudio),
-      check: new Audio(CheckMoveAudio),
-      illegal: new Audio(IllegalMoveAudio)
+
+
+function playSound(type) {
+    const sound = soundMap[type];
+    if (sound) {
+        sound.currentTime = 0;
+        sound.play();
     }
-    sounds[type]?.play();
-  }
+}
 
   function handleClick(row, col) {
     if (gameStatus !== "playing") return;
@@ -264,7 +277,9 @@ function ChessBoard() {
 
       const newFen = window.luna.makeMove(from, to, "");
       setBoard(parseFen(newFen));
-      playSound(capturedPiece ? "capture" : "move");
+      const isCastle = movingPiece.type === "king" && Math.abs(col - fromColSel) === 2;
+      console.log("about to play sound");
+      playSound(isCastle ? "castle" : capturedPiece ? "capture" : "move");
       setSelectedSquare(null);
       setLegalMoves([]);
       updateCheckStatus();
@@ -298,11 +313,12 @@ function ChessBoard() {
             addMoveToHistory("black", sanEngine);
             const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
             setBoard(parseFen(newFen2));
-            playSound(engineCaptured ? "capture" : "move");
+            playSound(promotion ? "promotion" : engineCaptured ? "capture" : "move");
             updateCheckStatus();
           }
           const status = window.luna.getGameStatus();
           setGameStatus(status);
+          if (status !== "playing") playSound("checkmate");
         }
       }, 100);
     } else {
