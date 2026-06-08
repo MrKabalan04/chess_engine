@@ -18,6 +18,11 @@ import BlackBishop from "../assets/pieces/BlackBishop.svg";
 import BlackQueen from "../assets/pieces/BlackQueen.svg";
 import BlackKing from "../assets/pieces/BlackKing.svg";
 
+import CaptureMoveAudio from "../assets/sounds/CaptureMoveAudio.mp3";
+import CheckMoveAudio from "../assets/sounds/CheckMoveAudio.mp3";
+import IllegalMoveAudio from "../assets/sounds/IllegalMoveAudio.mp3";
+import MoveAudio from "../assets/sounds/MoveAudio.mp3";
+
 const pieces = {
   white_pawn: WhitePawn,
   white_rook: WhiteRook,
@@ -33,6 +38,19 @@ const pieces = {
   black_king: BlackKing,
 };
 
+// Helper to get piece value for material calculation
+function getPieceValue(pieceKey) {
+  const type = pieceKey.split('_')[1];
+  switch (type) {
+    case 'pawn': return 1;
+    case 'knight': return 3;
+    case 'bishop': return 3;
+    case 'rook': return 5;
+    case 'queen': return 9;
+    default: return 0;
+  }
+}
+
 function ChessBoard() {
   const [board, setBoard] = useState(
     parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
@@ -44,6 +62,8 @@ function ChessBoard() {
   const [kingInCheck, setKingInCheck] = useState(false);
   const [kingSquare, setKingSquare] = useState(null);
   const [moveHistory, setMoveHistory] = useState([]);
+  const [capturedWhite, setCapturedWhite] = useState([]);
+  const [capturedBlack, setCapturedBlack] = useState([]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -59,22 +79,31 @@ function ChessBoard() {
     }, 100);
   }, []);
 
+  // Fixed move history – no duplicates, proper pairing
   function addMoveToHistory(side, san) {
     setMoveHistory(prev => {
-      const last = prev[prev.length - 1];
+      const newHistory = [...prev];
       if (side === "white") {
-        if (last && !last.white) {
-          last.white = san;
-          return [...prev.slice(0, -1), last];
+        // If last entry already has a white move, push a new move number
+        if (newHistory.length === 0 || newHistory[newHistory.length - 1].white !== null) {
+          newHistory.push({ white: san, black: null });
+        } else {
+          // Last entry has white:null, black:? (shouldn't happen, but fill white)
+          newHistory[newHistory.length - 1].white = san;
         }
-        return [...prev, { white: san, black: null }];
       } else {
-        if (last && !last.black) {
-          last.black = san;
-          return [...prev.slice(0, -1), last];
+        if (newHistory.length === 0) {
+          newHistory.push({ white: null, black: san });
+        } else {
+          const last = newHistory[newHistory.length - 1];
+          if (last.black === null) {
+            last.black = san;
+          } else {
+            newHistory.push({ white: null, black: san });
+          }
         }
-        return [...prev, { white: null, black: san }];
       }
+      return newHistory;
     });
   }
 
@@ -87,6 +116,7 @@ function ChessBoard() {
       const col = ks % 8;
       setKingInCheck(true);
       setKingSquare([row, col]);
+      playSound("check");
     } else {
       setKingInCheck(false);
       setKingSquare(null);
@@ -107,6 +137,8 @@ function ChessBoard() {
     setGameStatus("playing");
     setPendingPromotion(null);
     setMoveHistory([]);
+    setCapturedWhite([]);
+    setCapturedBlack([]);
     updateCheckStatus();
   }
 
@@ -128,7 +160,7 @@ function ChessBoard() {
     const san = uciToSan(board, fromRow, fromCol, toRow, toCol, type);
     addMoveToHistory(pendingPromotion.color === "white" ? "white" : "black", san);
 
-    // Engine response
+    // Engine response after promotion
     setTimeout(() => {
       if (window.luna) {
         const bestMove = window.luna.getBestMove();
@@ -143,11 +175,17 @@ function ChessBoard() {
             else if (promoLetter === 'b') promotion = 'bishop';
             else if (promoLetter === 'n') promotion = 'knight';
           }
-          // Get board BEFORE engine move (current board)
           const fromRowEngine = 7 - Math.floor(fromSq / 8);
           const fromColEngine = fromSq % 8;
           const toRowEngine = 7 - Math.floor(toSq / 8);
           const toColEngine = toSq % 8;
+          // Capture detection for engine move
+          const currentBoard = parseFen(newFen);
+          const engineCaptured = currentBoard[toRowEngine][toColEngine];
+          if (engineCaptured) {
+            const capturedKey = `${engineCaptured.color}_${engineCaptured.type}`;
+            setCapturedBlack(prev => [...prev, capturedKey]);
+          }
           const sanEngine = uciToSan(board, fromRowEngine, fromColEngine, toRowEngine, toColEngine, promotion);
           addMoveToHistory("black", sanEngine);
           const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
@@ -160,8 +198,17 @@ function ChessBoard() {
     }, 100);
   }
 
+  function playSound(type) {
+    const sounds = {
+      move : new Audio(MoveAudio),
+      capture: new Audio(CaptureMoveAudio),
+      check: new Audio(CheckMoveAudio),
+      illegal: new Audio(IllegalMoveAudio)
+    }
+    sounds[type]?.play();
+  }
+
   function handleClick(row, col) {
-    // If game is over, don't allow any moves
     if (gameStatus !== "playing") return;
 
     const piece = board[row][col];
@@ -191,6 +238,17 @@ function ChessBoard() {
       const from = (7 - fromRowSel) * 8 + fromColSel;
       const to = (7 - row) * 8 + col;
       const movingPiece = board[fromRowSel][fromColSel];
+      const capturedPiece = board[row][col];
+
+      // Record capture
+      if (capturedPiece) {
+        const capturedKey = `${capturedPiece.color}_${capturedPiece.type}`;
+        if (movingPiece.color === 'white') {
+          setCapturedWhite(prev => [...prev, capturedKey]);
+        } else {
+          setCapturedBlack(prev => [...prev, capturedKey]);
+        }
+      }
 
       // Check for pawn promotion
       if (movingPiece.type === "pawn" && (row === 0 || row === 7)) {
@@ -206,6 +264,7 @@ function ChessBoard() {
 
       const newFen = window.luna.makeMove(from, to, "");
       setBoard(parseFen(newFen));
+      playSound(capturedPiece ? "capture" : "move");
       setSelectedSquare(null);
       setLegalMoves([]);
       updateCheckStatus();
@@ -225,14 +284,21 @@ function ChessBoard() {
               else if (promoLetter === 'b') promotion = 'bishop';
               else if (promoLetter === 'n') promotion = 'knight';
             }
-            const fromRowEngine = 7 - Math.floor(fromSq / 8);
-            const fromColEngine = fromSq % 8;
-            const toRowEngine = 7 - Math.floor(toSq / 8);
-            const toColEngine = toSq % 8;
-            const sanEngine = uciToSan(board, fromRowEngine, fromColEngine, toRowEngine, toColEngine, promotion);
+            const engineFromRow = 7 - Math.floor(fromSq / 8);
+            const engineFromCol = fromSq % 8;
+            const engineToRow = 7 - Math.floor(toSq / 8);
+            const engineToCol = toSq % 8;
+            const boardAfterPlayerMove = parseFen(newFen);
+            const engineCaptured = boardAfterPlayerMove[engineToRow][engineToCol];
+            if (engineCaptured) {
+              const capturedKey = `${engineCaptured.color}_${engineCaptured.type}`;
+              setCapturedBlack(prev => [...prev, capturedKey]);
+            }
+            const sanEngine = uciToSan(board, engineFromRow, engineFromCol, engineToRow, engineToCol, promotion);
             addMoveToHistory("black", sanEngine);
             const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
             setBoard(parseFen(newFen2));
+            playSound(engineCaptured ? "capture" : "move");
             updateCheckStatus();
           }
           const status = window.luna.getGameStatus();
@@ -240,95 +306,134 @@ function ChessBoard() {
         }
       }, 100);
     } else {
+      playSound("illegal");
       setSelectedSquare(null);
       setLegalMoves([]);
     }
   }
 
-  // Helper to get game over message
-  function getGameOverMessage() {
-    if (gameStatus === "checkmate") return "Checkmate!";
-    if (gameStatus === "stalemate") return "Stalemate!";
-    if (gameStatus === "draw") return "Draw!";
-    return null;
-  }
-
-  const gameOverMessage = getGameOverMessage();
+  // Calculate material advantage
+  const whiteMaterial = capturedWhite.reduce((sum, key) => sum + getPieceValue(key), 0);
+  const blackMaterial = capturedBlack.reduce((sum, key) => sum + getPieceValue(key), 0);
+  const materialAdvantage = whiteMaterial - blackMaterial;
+  const advantageText = materialAdvantage > 0 ? `+${materialAdvantage}` : materialAdvantage < 0 ? `${materialAdvantage}` : '';
 
   return (
-  <div className="chess-dashboard">
-    {/* Left side: Board + overlays */}
-    <div className="board-container">
-      <div className="board">
-        {board.map((row, r) =>
-          row.map((sq, c) => (
-            <div
-              key={`${r}-${c}`}
-              className={`square ${(r + c) % 2 === 0 ? "light" : "dark"} ${
-                selectedSquare && selectedSquare[0] === r && selectedSquare[1] === c ? "selected" : ""
-              } ${
-                legalMoves.some((m) => m[0] === r && m[1] === c) ? "legal-move" : ""
-              } ${
-                kingInCheck && kingSquare && kingSquare[0] === r && kingSquare[1] === c ? "in-check" : ""
-              }`}
-              onClick={() => handleClick(r, c)}
-            >
-              {sq && (
-                <img
-                  src={pieces[`${sq.color}_${sq.type}`]}
-                  className="piece"
-                  draggable="false"
-                  alt=""
-                />
-              )}
+    <div className="chess-dashboard">
+      {/* Left: Chess board */}
+      <div className="board-container">
+        <div className="board">
+          {board.map((row, r) =>
+            row.map((sq, c) => (
+              <div
+                key={`${r}-${c}`}
+                className={`square ${(r + c) % 2 === 0 ? "light" : "dark"} ${
+                  selectedSquare && selectedSquare[0] === r && selectedSquare[1] === c ? "selected" : ""
+                } ${
+                  legalMoves.some((m) => m[0] === r && m[1] === c) ? "legal-move" : ""
+                } ${
+                  kingInCheck && kingSquare && kingSquare[0] === r && kingSquare[1] === c ? "in-check" : ""
+                }`}
+                onClick={() => handleClick(r, c)}
+              >
+                {sq && (
+                  <img
+                    src={pieces[`${sq.color}_${sq.type}`]}
+                    className="piece"
+                    draggable="false"
+                    alt=""
+                  />
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        {pendingPromotion && (
+          <div className="promotion-overlay">
+            <div className="promotion-box">
+              <p>Choose a piece</p>
+              <div className="promotion-pieces">
+                {["queen", "rook", "bishop", "knight"].map(type => (
+                  <img
+                    key={type}
+                    src={pieces[`${pendingPromotion.color}_${type}`]}
+                    onClick={() => handlePromotion(type)}
+                    className="promotion-piece"
+                    alt={type}
+                  />
+                ))}
+              </div>
             </div>
-          ))
+          </div>
         )}
       </div>
 
-      {/* Promotion overlay (centered on board) */}
-      {pendingPromotion && (
-        <div className="promotion-overlay">
-          <div className="promotion-box">
-            <p>Choose a piece</p>
-            <div className="promotion-pieces">
-              {["queen", "rook", "bishop", "knight"].map(type => (
-                <img
-                  key={type}
-                  src={pieces[`${pendingPromotion.color}_${type}`]}
-                  onClick={() => handlePromotion(type)}
-                  className="promotion-piece"
-                  alt={type}
-                />
+      {/* Right: Dashboard */}
+      <div className="dashboard-panel">
+        {/* Top bar: status + new game */}
+        <div className="game-status-bar">
+          <div className="game-status-message">
+            {gameStatus === "playing"
+              ? (kingInCheck ? "CHECK!" : "Playing")
+              : gameStatus === "checkmate"
+              ? "Checkmate!"
+              : gameStatus === "stalemate"
+              ? "Stalemate!"
+              : "Draw!"}
+          </div>
+          <button className="new-game-btn" onClick={resetGame}>New Game</button>
+        </div>
+
+        {/* Captured pieces section – with icons */}
+        <div className="captured-section">
+          <div className="captured-row">
+            <span className="captured-label">White</span>
+            <div className="captured-pieces">
+              {capturedWhite.map((key, idx) => (
+                <img key={idx} src={pieces[key]} className="captured-piece" alt="" />
               ))}
             </div>
+            <span className="material-score">{whiteMaterial > 0 ? `+${whiteMaterial}` : ''}</span>
+          </div>
+          <div className="captured-row">
+            <span className="captured-label">Black</span>
+            <div className="captured-pieces">
+              {capturedBlack.map((key, idx) => (
+                <img key={idx} src={pieces[key]} className="captured-piece" alt="" />
+              ))}
+            </div>
+            <span className="material-score">{blackMaterial > 0 ? `+${blackMaterial}` : ''}</span>
+          </div>
+          {advantageText && <div className="advantage-indicator">{advantageText}</div>}
+        </div>
+
+        {/* Move history – clean table */}
+        <div className="move-history">
+          <h3>Move History</h3>
+          <div className="move-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>White</th>
+                  <th>Black</th>
+                </tr>
+              </thead>
+              <tbody>
+                {moveHistory.map((move, idx) => (
+                  <tr key={idx}>
+                    <td>{idx + 1}</td>
+                    <td>{move.white || '—'}</td>
+                    <td>{move.black || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      )}
-    </div>
-
-    {/* Right side: Dashboard */}
-    <div className="dashboard-panel">
-      {/* Game status bar */}
-      <div className="game-status-bar">
-        <span className="game-status-message">
-          {gameStatus === "playing"
-            ? (kingInCheck ? "CHECK!" : "Playing")
-            : gameStatus === "checkmate"
-            ? "Checkmate!"
-            : gameStatus === "stalemate"
-            ? "Stalemate!"
-            : "Draw!"}
-        </span>
-        <button className="new-game-btn" onClick={resetGame}>
-          New Game
-        </button>
       </div>
-
-      {/* Move history */}
-      <MoveHistory moves={moveHistory} />
     </div>
-  </div>
   );
 }
 

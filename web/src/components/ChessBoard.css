@@ -1,16 +1,14 @@
-
+/* =========================
+   BOARD STYLES
+   ========================= */
 .board {
   display: grid;
   grid-template-columns: repeat(8, 65px);
   grid-template-rows: repeat(8, 65px);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow:
-    0 25px 50px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(245, 220, 160, 0.15),
-    0 0 25px rgba(245, 210, 140, 0.2);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(245, 220, 160, 0.15), 0 0 25px rgba(245, 210, 140, 0.2);
 }
-
 
 .square {
   display: flex;
@@ -27,12 +25,10 @@
   background: linear-gradient(135deg, #e8e4da, #ded9cf);
 }
 
-/* Dark squares – deep lunar night */
 .square.dark {
   background: #5a5f73;
   background: linear-gradient(135deg, #636878, #51566a);
 }
-
 
 .square:hover::after {
   content: "";
@@ -42,16 +38,14 @@
   pointer-events: none;
 }
 
-/* Selected square – glowing lunar halo */
 .square.selected {
   background: #8b90c0 !important;
   box-shadow: inset 0 0 0 2px rgba(245, 220, 160, 0.8), inset 0 0 12px rgba(0, 0, 0, 0.2);
 }
 
 .square.selected::after {
-  background: transparent; 
+  background: transparent;
 }
-
 
 .piece {
   width: 82%;
@@ -62,18 +56,16 @@
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.2));
 }
 
-/* Piece lift on hover */
 .square:hover .piece {
   transform: translateY(-2px) scale(1.02);
   filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
 }
 
-
 .square.dark .piece {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
 }
 
-.legal-move{
+.legal-move {
   background: rgba(245, 220, 160, 0.3);
 }
 
@@ -82,27 +74,20 @@
   box-shadow: inset 0 0 0 2px rgba(245, 220, 160, 0.5);
 }
 
-
-/* Reset Button - Lunar Theme */
-.reset-button {
-  background: rgba(8, 10, 18, 0.75);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(245, 211, 138, 0.3);
-  border-radius: 40px;
-  padding: 8px 24px;
-  font-family: 'Inter', monospace;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 1.5px;
-  color: #f5d38a;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 0 8px rgba(245, 211, 138, 0.1);
-  margin-top: 20px;
+.square.in-check {
+  background: rgba(245, 180, 100, 0.85) !important;
+  box-shadow: inset 0 0 0 2px rgba(245, 200, 120, 0.9), inset 0 0 12px rgba(0, 0, 0, 0.3);
+  animation: checkPulse 1s ease-in-out infinite;
 }
 
+@keyframes checkPulse {
+  0%, 100% { background: rgba(245, 180, 100, 0.85); }
+  50% { background: rgba(245, 140, 60, 0.95); }
+}
 
+/* =========================
+   PROMOTION OVERLAY
+   ========================= */
 .promotion-overlay {
   position: absolute;
   inset: 0;
@@ -148,172 +133,213 @@
   transform: scale(1.15);
 }
 
-.square.in-check {
-  background: rgba(245, 180, 100, 0.85) !important;
-  box-shadow: inset 0 0 0 2px rgba(245, 200, 120, 0.9), inset 0 0 12px rgba(0, 0, 0, 0.3);
-  animation: checkPulse 1s ease-in-out infinite;
-}
-
-@keyframes checkPulse {
-  0%, 100% { background: rgba(245, 180, 100, 0.85); }
-  50% { background: rgba(245, 140, 60, 0.95); }
-}
-
-/* Non‑blocking game over banner */
-.game-over-banner {
-  margin-top: 16px;
-  padding: 10px 20px;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(245, 211, 138, 0.5);
-  border-radius: 40px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-  font-family: 'Inter', monospace;
-  color: #f5d38a;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.game-over-banner button {
-  background: rgba(245, 211, 138, 0.2);
-  border: 1px solid rgba(245, 211, 138, 0.4);
-  border-radius: 30px;
-  padding: 6px 16px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #f5d38a;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.game-over-banner button:hover {
-  background: rgba(245, 211, 138, 0.35);
-  transform: scale(1.02);
-}
-
-/* Dashboard layout */
+/* =========================
+   DASHBOARD LAYOUT – board height = 520px, same for dashboard
+   ========================= */
 .chess-dashboard {
   display: flex;
   gap: 24px;
   justify-content: center;
   align-items: flex-start;
-  padding: 20px;
+  padding: 0 20px;
 }
 
 .board-container {
   position: relative;
   flex-shrink: 0;
+  height: 520px;          /* board is 8*65 = 520px */
 }
 
-/* Dashboard panel */
 .dashboard-panel {
-  background: rgba(10, 12, 21, 0.7);
-  backdrop-filter: blur(12px);
-  border-radius: 16px;
-  border: 1px solid rgba(245, 211, 138, 0.25);
-  overflow: hidden;
-  width: 280px;
+  background: rgba(10, 12, 21, 0.9);   /* less transparency for better readability */
+  backdrop-filter: blur(16px);
+  border-radius: 20px;
+  border: 1px solid rgba(245, 211, 138, 0.3);
+  width: 320px;
+  height: 520px;                        /* exactly same height as board */
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  font-family: 'Inter', monospace;
 }
 
-/* Game status bar inside dashboard */
+/* =========================
+   GAME STATUS BAR
+   ========================= */
 .game-status-bar {
-  background: rgba(0, 0, 0, 0.5);
-  padding: 14px 16px;
-  border-bottom: 1px solid rgba(245, 211, 138, 0.2);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(245, 211, 138, 0.3);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .game-status-message {
-  font-family: 'Inter', monospace;
   font-size: 14px;
   font-weight: 600;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   color: #f5d38a;
-  user-select: none;
+  text-transform: uppercase;
 }
 
 .new-game-btn {
-  background: rgba(245, 211, 138, 0.15);
-  border: 1px solid rgba(245, 211, 138, 0.4);
-  border-radius: 30px;
-  padding: 6px 14px;
-  font-family: 'Inter', monospace;
-  font-size: 12px;
+  background: rgba(245, 211, 138, 0.2);
+  border: 1px solid rgba(245, 211, 138, 0.5);
+  border-radius: 40px;
+  padding: 4px 12px;
+  font-size: 11px;
   font-weight: 500;
   color: #f5d38a;
   cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
+  transition: all 0.2s;
 }
 
 .new-game-btn:hover {
-  background: rgba(245, 211, 138, 0.3);
+  background: rgba(245, 211, 138, 0.4);
   transform: scale(1.02);
 }
 
-/* Move history inside dashboard */
+/* =========================
+   CAPTURED PIECES SECTION – CLEAR AND VISIBLE
+   ========================= */
+.captured-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(245, 220, 160, 0.2);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.captured-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.captured-label {
+  font-family: 'Inter', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: #e0d0a0;
+  width: 40px;
+  text-shadow: 0 0 2px rgba(0,0,0,0.5);
+}
+
+.captured-pieces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  min-height: 32px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(20, 20, 35, 0.8);
+  border: 1px solid rgba(245, 220, 160, 0.2);
+}
+
+/* Different backgrounds for better contrast */
+.captured-row:first-child .captured-pieces {
+  background: rgba(50, 40, 25, 0.8);  /* warm tone for white's captures */
+}
+
+.captured-row:last-child .captured-pieces {
+  background: rgba(20, 25, 40, 0.8);  /* cool tone for black's captures */
+}
+
+.captured-piece {
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+  border-radius: 4px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.2);
+  transition: transform 0.1s;
+}
+
+.captured-piece:hover {
+  transform: scale(1.1);
+}
+
+.material-score {
+  font-family: 'Inter', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f5d38a;
+  min-width: 32px;
+  text-align: right;
+  text-shadow: 0 0 2px black;
+}
+
+.advantage-indicator {
+  text-align: right;
+  font-family: 'Inter', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f5d38a;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(245, 220, 160, 0.3);
+}
+
+/* =========================
+   MOVE HISTORY – scrollable
+   ========================= */
 .move-history {
   flex: 1;
-  max-height: 500px;
   overflow-y: auto;
-  padding: 12px;
+  padding: 8px 12px;
 }
 
 .move-history h3 {
-  margin: 0 0 12px 0;
-  font-size: 14px;
+  margin: 0 0 8px 0;
+  font-size: 13px;
   letter-spacing: 1px;
-  color: #c0d0e0;
+  color: #f5d38a;
   text-align: center;
-  border-bottom: 1px solid rgba(245, 220, 160, 0.2);
-  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(245, 220, 160, 0.3);
+  padding-bottom: 6px;
+}
+
+.move-table {
+  overflow-x: auto;
 }
 
 .move-history table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
-  font-family: 'Inter', monospace;
+  font-size: 11px;
 }
 
 .move-history th, .move-history td {
-  padding: 6px 4px;
+  padding: 4px 2px;
   text-align: center;
   border-bottom: 1px solid rgba(245, 220, 160, 0.15);
 }
 
 .move-history th {
-  color: #a0b0c0;
-  font-weight: 500;
+  color: #c0b890;
+  font-weight: 600;
 }
 
 .move-history td {
-  color: #e0e0e0;
+  color: #e8e0d0;
+  font-family: monospace;
 }
 
 /* Scrollbar styling */
 .move-history::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 .move-history::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.4);
   border-radius: 3px;
 }
 
 .move-history::-webkit-scrollbar-thumb {
-  background: rgba(245, 211, 138, 0.5);
+  background: #f5d38a;
   border-radius: 3px;
-}
-
-.move-history::-webkit-scrollbar-thumb:hover {
-  background: rgba(245, 211, 138, 0.8);
 }

@@ -1,13 +1,17 @@
 .app {
   min-height: 100vh;
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-/* center chess only */
+/* center chess board – add top margin to clear fixed header (80px) */
 .center {
-  height: 100vh;
   display: flex;
   justify-content: center;
   align-items: center;
+  width: 100%;
+  margin-top: 100px;         /* space for header + extra gap */
+  margin-bottom: 80px;      /* space for footer */
+  box-sizing: border-box;
 }
