@@ -992,9 +992,10 @@ int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
     for (int i = 0; i < captures.count; i++)
     {
         Move move = captures.moves[i];
+        bool isPromotion = (move.getType() >= PROMOT_QUEEN);
 
-        // Skip SEE-losing captures in qsearch (they only waste time)
-        if (move.getType() != EN_PASSANT && seeCapture(board, move) < 0)
+        
+        if (!isPromotion && move.getType() != EN_PASSANT && seeCapture(board, move) < 0)
             continue;
 
         board.makeMove(move);

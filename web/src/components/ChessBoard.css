@@ -3,9 +3,9 @@
    ========================= */
 .board {
   display: grid;
-  grid-template-columns: repeat(8, 65px);
-  grid-template-rows: repeat(8, 65px);
-  border-radius: 16px;
+  grid-template-columns: repeat(8, var(--sq));
+  grid-template-rows: repeat(8, var(--sq));
+  border-radius: calc(var(--sq) * 0.06);
   overflow: hidden;
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(245, 220, 160, 0.15), 0 0 25px rgba(245, 210, 140, 0.2);
 }
@@ -18,6 +18,38 @@
   user-select: none;
   transition: all 0.2s ease;
   cursor: pointer;
+}
+
+.square.last-move {
+  box-shadow: inset 0 0 0 9999px rgba(230, 190, 110, 0.32);
+}
+
+.coord {
+  position: absolute;
+  font-family: 'Inter', monospace;
+  font-weight: 600;
+  font-size: calc(var(--sq) * 0.17);
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+  z-index: 2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.coord-rank {
+  top: 4%;
+  left: 5%;
+}
+
+.coord-file {
+  bottom: 3%;
+  right: 6%;
+}
+
+/* Ranks/files read better on light squares */
+.square.light .coord {
+  color: rgba(64, 68, 90, 0.85);
+  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.35);
 }
 
 .square.light {
@@ -95,7 +127,7 @@
   justify-content: center;
   align-items: center;
   background: rgba(0, 0, 0, 0.6);
-  border-radius: 16px;
+  border-radius: calc(var(--sq) * 0.06);
   user-select: none;
   z-index: 10;
 }
@@ -140,26 +172,114 @@
   display: flex;
   gap: 24px;
   justify-content: center;
-  align-items: flex-start;
-  padding: 0 20px;
+  align-items: center;
+  /* Responsive square size: fixed 65px, shrinking to fit width AND height */
+  --sq: max(40px, min(65px, calc((100vw - 460px) / 8), calc((100vh - 300px) / 8)));
+
+  /* Unified glass shell – one product, not two floating boxes */
+  background: rgba(10, 12, 21, 0.62);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(245, 211, 138, 0.22);
+  border-radius: 28px;
+  padding: 24px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.55), 0 0 45px rgba(245, 210, 140, 0.07);
 }
 
 .board-container {
-  position: relative;
   flex-shrink: 0;
-  height: 520px;          /* board is 8*65 = 520px */
+}
+
+.board-wrapper {
+  position: relative;
+  height: calc(var(--sq) * 8);
+}
+
+.game-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(245, 220, 160, 0.2);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.side-picker {
+  display: flex;
+  gap: 6px;
+}
+
+.side-btn {
+  background: rgba(245, 211, 138, 0.15);
+  border: 1px solid rgba(245, 211, 138, 0.35);
+  border-radius: 40px;
+  padding: 6px 12px;
+  font-family: 'Inter', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #f5d38a;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.side-btn:hover {
+  background: rgba(245, 211, 138, 0.3);
+}
+
+.side-btn.active {
+  background: rgba(245, 211, 138, 0.55);
+  border-color: rgba(245, 211, 138, 0.9);
+  color: #1a1c2a;
+}
+
+.control-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 12, 21, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(245, 211, 138, 0.35);
+  border-radius: 40px;
+  padding: 8px 18px;
+  font-family: 'Inter', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #f5d38a;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+}
+
+.control-btn .control-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #f5d38a;
+}
+
+.control-btn:hover:not(:disabled) {
+  background: rgba(245, 211, 138, 0.15);
+  border-color: rgba(245, 211, 138, 0.7);
+  transform: translateY(-1px);
+}
+
+.control-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .dashboard-panel {
-  background: rgba(10, 12, 21, 0.9);   /* less transparency for better readability */
-  backdrop-filter: blur(16px);
-  border-radius: 20px;
-  border: 1px solid rgba(245, 211, 138, 0.3);
+  background: rgba(10, 12, 21, 0.45);
+  backdrop-filter: blur(10px);
+  border-radius: 18px;
+  border: 1px solid rgba(245, 211, 138, 0.18);
   width: 320px;
-  height: 520px;                        /* exactly same height as board */
+  height: calc(var(--sq) * 8);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
   overflow: hidden;
   font-family: 'Inter', monospace;
 }
@@ -189,17 +309,20 @@
   background: rgba(245, 211, 138, 0.2);
   border: 1px solid rgba(245, 211, 138, 0.5);
   border-radius: 40px;
-  padding: 4px 12px;
+  padding: 5px 14px;
+  font-family: 'Inter', monospace;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.5px;
   color: #f5d38a;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .new-game-btn:hover {
-  background: rgba(245, 211, 138, 0.4);
-  transform: scale(1.02);
+  background: #f5d38a;
+  color: #1a1c2a;
+  transform: scale(1.03);
 }
 
 /* =========================
@@ -329,6 +452,13 @@
   font-family: monospace;
 }
 
+.move-history tr.last-move-row td {
+  background: rgba(245, 211, 138, 0.2);
+  border-radius: 6px;
+  color: #ffdf9e;
+  font-weight: 600;
+}
+
 /* Scrollbar styling */
 .move-history::-webkit-scrollbar {
   width: 5px;
@@ -342,4 +472,20 @@
 .move-history::-webkit-scrollbar-thumb {
   background: #f5d38a;
   border-radius: 3px;
+}
+
+/* Narrow screens – stack board above the panel instead of overflowing */
+@media (max-width: 900px) {
+  .chess-dashboard {
+    flex-direction: column;
+    align-items: center;
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .dashboard-panel {
+    width: min(320px, calc(100vw - 72px));
+    height: auto;
+    max-height: 420px;
+  }
 }

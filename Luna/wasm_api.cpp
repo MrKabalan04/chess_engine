@@ -83,6 +83,11 @@ std::string getBestMove() {
     return sq(best.getFrom()) + sq(best.getTo());
 }
 
+std::string undoMove() {
+    board.undoMove();
+    return board.getFen();
+}
+
 bool isInCheck() {
     return gen.isInCheck(board, board.sideToMove);
 }
@@ -100,6 +105,7 @@ EMSCRIPTEN_BINDINGS(luna) {
     emscripten::function("getLegalMoves", &getLegalMoves);
     emscripten::function("makeMove", &makeMove);
     emscripten::function("getBestMove", &getBestMove);
+    emscripten::function("undoMove", &undoMove);
     emscripten::function("getGameStatus", &getGameStatus);
     emscripten::function("getSideToMove", &getSideToMove);
     emscripten::function("getAllLegalMoves", &getAllLegalMoves);

@@ -5,13 +5,13 @@
   overflow-y: auto;
 }
 
-/* center chess board – add top margin to clear fixed header (80px) */
+/* center the game shell between the fixed header and footer, sized to viewport */
 .center {
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
-  margin-top: 100px;         /* space for header + extra gap */
-  margin-bottom: 80px;      /* space for footer */
+  min-height: 100vh;
+  padding: 100px 20px 112px;   /* clears the 80px header and footer */
   box-sizing: border-box;
 }
