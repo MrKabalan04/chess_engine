@@ -2,7 +2,6 @@ import "./ChessBoard.css";
 import parseFen from "./parseFen";
 import { useState, useEffect, useRef } from "react";
 import { uciToSan } from "./uciToSan";
-import MoveHistory from "./MoveHistory/MoveHistory.jsx";
 
 import WhitePawn from "../assets/pieces/WhitePawn.svg";
 import WhiteRook from "../assets/pieces/WhiteRook.svg";
