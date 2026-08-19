@@ -127,7 +127,10 @@ export function uciToSan(board, fromRow, fromCol, toRow, toCol, promotionType = 
 
   let san = '';
 
-  if (isPawn) {
+  // Castling: a king moving two files along its back rank
+  if (piece.type === 'king' && Math.abs(toCol - fromCol) === 2) {
+    san = toCol > fromCol ? 'O-O' : 'O-O-O';
+  } else if (isPawn) {
     if (isCapture) {
       const srcFile = String.fromCharCode(97 + fromCol);
       san = srcFile + 'x' + destination;

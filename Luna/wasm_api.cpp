@@ -15,6 +15,11 @@ void initEngine() {
     board.initZobrist();
     board.init();
     gen.init();
+    gen.gamePly = 0;
+    // Build the opening book once so the browser engine plays real
+    // openings (as both colours) instead of a bare, deterministic search.
+    if (!gen.bookLoaded)
+        gen.buildBook(board);
 }
 
 int getSideToMove() {
@@ -71,6 +76,7 @@ std::string makeMove(int from, int to, std::string promo) {
                 if (promo == "n" && m.getType() != PROMOT_KNIGHT) continue;
             }
             board.makeMove(m);
+            gen.gamePly++;   // track full-game ply count (time management)
             return board.getFen();
         }
     }
@@ -79,11 +85,18 @@ std::string makeMove(int from, int to, std::string promo) {
 }
 
 std::string getBestMove() {
-    Move best = gen.getBestMove(board, 64, 5000, 0, 0, -1);
+    // Fixed per-move budget for casual web play: ~1.2s of exclusive thinking
+    // (previously the 5s clock + gamePly==0 gave the engine only ~73ms and a
+    // depth-7 search, which is why it blundered and shuffled aimlessly).
+    Move best = gen.getBestMove(board, 64, 5000, 0, 0, 1200);
+    // UCI/engine convention: "0000" = no legal move (mate/stalemate),
+    // not the raw squares of the null move ("a1a1").
+    if (best.getFrom() == 0 && best.getTo() == 0) return "0000";
     return sq(best.getFrom()) + sq(best.getTo());
 }
 
 std::string undoMove() {
+    if (gen.gamePly > 0) gen.gamePly--;
     board.undoMove();
     return board.getFen();
 }

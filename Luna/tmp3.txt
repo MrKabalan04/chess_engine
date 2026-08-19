@@ -1,0 +1,4 @@
+uci
+position fen k7/2Q5/8/K7/8/8/8/8 w - - 0 1
+go movetime 500
+quit

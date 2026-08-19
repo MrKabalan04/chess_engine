@@ -144,6 +144,10 @@ void checkTimeBudget()
   Move getBestMove(Board &board, int maxDepth, long long myTimeLeftMs = 5000,
                    long long incrementMs = 0, int movesToGo = 40,
                    long long movetimeMs = -1);
+  // Deterministic converter for KQ-vs-K and KR-vs-K: greedy confinement +
+  // approach move selection. Returns a zero Move when the position does not
+  // match (caller then falls back to the full search).
+  Move tryEndgameMateMove(Board &board);
   void orderMoves(MoveList& moves, Board& board, int ply, Move ttMove);
   void orderCaptures(MoveList &list, const Board &board);
 

@@ -416,14 +416,53 @@
   padding: 8px 12px;
 }
 
+.move-history-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 12, 21, 0.96);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(245, 220, 160, 0.3);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
 .move-history h3 {
-  margin: 0 0 8px 0;
+  margin: 0;
   font-size: 13px;
   letter-spacing: 1px;
   color: #f5d38a;
   text-align: center;
-  border-bottom: 1px solid rgba(245, 220, 160, 0.3);
-  padding-bottom: 6px;
+}
+
+.copy-pgn-btn {
+  background: rgba(245, 211, 138, 0.2);
+  border: 1px solid rgba(245, 211, 138, 0.5);
+  border-radius: 40px;
+  padding: 4px 12px;
+  font-family: 'Inter', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #f5d38a;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.copy-pgn-btn:hover:not(:disabled) {
+  background: #f5d38a;
+  color: #1a1c2a;
+  transform: scale(1.03);
+}
+
+.copy-pgn-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .move-table {
@@ -433,13 +472,14 @@
 .move-history table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .move-history th, .move-history td {
-  padding: 4px 2px;
+  padding: 6px 4px;
   text-align: center;
   border-bottom: 1px solid rgba(245, 220, 160, 0.15);
+  user-select: text;
 }
 
 .move-history th {

@@ -31,6 +31,9 @@ void UCI::uciLoop(Board &board, GenerateMoves &gen) {
       cout << "uciok\n" << flush;
     } else if (command == "isready") {
       cout << "readyok\n" << flush;
+    } else if (command == "eval") {
+      cout << "evalFull=" << gen.evalFull(board)
+           << " evaluate=" << board.evaluate() << "\n" << flush;
     } else if (command == "ucinewgame") {
       board.init();
       gen.gamePly = 0;
@@ -146,6 +149,11 @@ void UCI::parseGo(const string &input, Board &board, GenerateMoves &gen) {
   if (bestMove.getType() == PROMOT_BISHOP) promoSuffix = "b";
   if (bestMove.getType() == PROMOT_KNIGHT) promoSuffix = "n";
 
-  cout << "bestmove " << sq(bestMove.getFrom()) << sq(bestMove.getTo())
-       << promoSuffix << endl << flush;
+  // UCI: "0000" means no legal move (checkmate / stalemate). The engine's
+  // null Move(0,0,NORMAL) would otherwise print "a1a1" and hang GUIs.
+  if (bestMove.getFrom() == 0 && bestMove.getTo() == 0 && promoSuffix == "")
+    cout << "bestmove 0000" << endl << flush;
+  else
+    cout << "bestmove " << sq(bestMove.getFrom()) << sq(bestMove.getTo())
+         << promoSuffix << endl << flush;
 }

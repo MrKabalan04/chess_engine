@@ -86,6 +86,9 @@ function ChessBoard() {
   // Last played move: [[fromRow, fromCol], [toRow, toCol]] in board coords
   const [lastMove, setLastMove] = useState(null);
   const engineTimerRef = useRef(null);
+  const engineBusyRef = useRef(false);
+  const moveListRef = useRef(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -100,6 +103,57 @@ function ChessBoard() {
       }
     }, 100);
   }, []);
+
+  // Keep the latest move in view as the game progresses
+  useEffect(() => {
+    if (moveListRef.current) {
+      moveListRef.current.scrollTop = moveListRef.current.scrollHeight;
+    }
+  }, [moveHistory]);
+
+  // Build a PGN from the paired move history
+  function buildPgn() {
+    let result = "*";
+    if (gameStatus === "checkmate") {
+      const last = moveStack[moveStack.length - 1];
+      result = last && last.side === "white" ? "1-0" : "0-1";
+    } else if (gameStatus === "stalemate" || gameStatus === "draw") {
+      result = "1/2-1/2";
+    }
+    let pgn = `[Event "Luna vs Player"]\n[Site "Web"]\n[Result "${result}"]\n\n`;
+    let line = "";
+    moveHistory.forEach((m, i) => {
+      let txt = `${i + 1}.`;
+      if (m.white) txt += ` ${m.white}`;
+      if (m.black) txt += ` ${m.black}`;
+      line += txt + "  ";
+      if (line.length > 60) {
+        pgn += line.trimEnd() + "\n";
+        line = "";
+      }
+    });
+    pgn += (line.trimEnd() + " " + result).trim() + "\n";
+    return pgn;
+  }
+
+  async function copyPgn() {
+    if (moveHistory.length === 0) return;
+    const pgn = buildPgn();
+    try {
+      await navigator.clipboard.writeText(pgn);
+    } catch (err) {
+      const ta = document.createElement("textarea");
+      ta.value = pgn;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  }
 
   // Fixed move history – no duplicates, proper pairing
   function addMoveToHistory(side, san) {
@@ -130,7 +184,20 @@ function ChessBoard() {
   }
 
   function pushPly(side, san, captured) {
-    setMoveStack(prev => [...prev, { side, san, captured: captured || null }]);
+    setMoveStack(prev => {
+      // Guard against duplicate recording (e.g. an engine reply firing
+      // twice): an identical consecutive ply is always a true duplicate.
+      const last = prev[prev.length - 1];
+      if (last && last.side === side && last.san === san) return prev;
+      return [...prev, { side, san, captured: captured || null }];
+    });
+  }
+
+  // Schedule exactly one engine reply; if a reply is already pending (or
+  // in flight), ignore the new request so plies are never recorded twice.
+  function scheduleEngineReply(boardBefore) {
+    if (engineTimerRef.current || engineBusyRef.current) return;
+    engineTimerRef.current = setTimeout(() => engineReply(boardBefore), 100);
   }
 
   // Rebuild the white/black paired history from the flat ply stack
@@ -177,44 +244,52 @@ function ChessBoard() {
   // the engine moves (used only to build SAN).
   function engineReply(boardBefore) {
     if (!window.luna) return;
-    const bestMove = window.luna.getBestMove();
-    if (bestMove && bestMove.length >= 4) {
-      const fromSq = algebraicToSquare(bestMove.slice(0, 2));
-      const toSq = algebraicToSquare(bestMove.slice(2, 4));
-      let promotion = null;
-      if (bestMove.length > 4) {
-        const promoLetter = bestMove[4];
-        if (promoLetter === 'q') promotion = 'queen';
-        else if (promoLetter === 'r') promotion = 'rook';
-        else if (promoLetter === 'b') promotion = 'bishop';
-        else if (promoLetter === 'n') promotion = 'knight';
+    if (engineBusyRef.current) return;   // already producing a reply
+    engineBusyRef.current = true;
+    try {
+      const engineSide = playerSide === "white" ? 1 : 0;
+      if (window.luna.getSideToMove() !== engineSide) return; // not our turn
+      const bestMove = window.luna.getBestMove();
+      if (bestMove && bestMove.length >= 4) {
+        const fromSq = algebraicToSquare(bestMove.slice(0, 2));
+        const toSq = algebraicToSquare(bestMove.slice(2, 4));
+        let promotion = null;
+        if (bestMove.length > 4) {
+          const promoLetter = bestMove[4];
+          if (promoLetter === 'q') promotion = 'queen';
+          else if (promoLetter === 'r') promotion = 'rook';
+          else if (promoLetter === 'b') promotion = 'bishop';
+          else if (promoLetter === 'n') promotion = 'knight';
+        }
+        const engineFromRow = 7 - Math.floor(fromSq / 8);
+        const engineFromCol = fromSq % 8;
+        const engineToRow = 7 - Math.floor(toSq / 8);
+        const engineToCol = toSq % 8;
+        const engineColor = window.luna.getSideToMove() === 0 ? "white" : "black";
+        const currentBoard = parseFen(window.luna.getFen());
+        const engineCaptured = currentBoard[engineToRow][engineToCol];
+        let engineCapturedKey = null;
+        if (engineCaptured) {
+          engineCapturedKey = `${engineCaptured.color}_${engineCaptured.type}`;
+          if (engineColor === "white") setCapturedWhite(prev => [...prev, engineCapturedKey]);
+          else setCapturedBlack(prev => [...prev, engineCapturedKey]);
+        }
+        const sanEngine = uciToSan(boardBefore || board, engineFromRow, engineFromCol, engineToRow, engineToCol, promotion);
+        addMoveToHistory(engineColor, sanEngine);
+        pushPly(engineColor, sanEngine, engineCapturedKey);
+        const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
+        setBoard(parseFen(newFen2));
+        setLastMove([[engineFromRow, engineFromCol], [engineToRow, engineToCol]]);
+        playSound(promotion ? "promotion" : engineCaptured ? "capture" : "move");
+        updateCheckStatus();
       }
-      const engineFromRow = 7 - Math.floor(fromSq / 8);
-      const engineFromCol = fromSq % 8;
-      const engineToRow = 7 - Math.floor(toSq / 8);
-      const engineToCol = toSq % 8;
-      const engineColor = window.luna.getSideToMove() === 0 ? "white" : "black";
-      const currentBoard = parseFen(window.luna.getFen());
-      const engineCaptured = currentBoard[engineToRow][engineToCol];
-      let engineCapturedKey = null;
-      if (engineCaptured) {
-        engineCapturedKey = `${engineCaptured.color}_${engineCaptured.type}`;
-        if (engineColor === "white") setCapturedWhite(prev => [...prev, engineCapturedKey]);
-        else setCapturedBlack(prev => [...prev, engineCapturedKey]);
-      }
-      const sanEngine = uciToSan(boardBefore || board, engineFromRow, engineFromCol, engineToRow, engineToCol, promotion);
-      addMoveToHistory(engineColor, sanEngine);
-      pushPly(engineColor, sanEngine, engineCapturedKey);
-      const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
-      setBoard(parseFen(newFen2));
-      setLastMove([[engineFromRow, engineFromCol], [engineToRow, engineToCol]]);
-      playSound(promotion ? "promotion" : engineCaptured ? "capture" : "move");
-      updateCheckStatus();
+      const status = window.luna.getGameStatus();
+      setGameStatus(status);
+      if (status !== "playing") playSound("checkmate");
+    } finally {
+      engineTimerRef.current = null;
+      engineBusyRef.current = false;
     }
-    const status = window.luna.getGameStatus();
-    setGameStatus(status);
-    if (status !== "playing") playSound("checkmate");
-    engineTimerRef.current = null;
   }
 
   // Wipe all game state back to the starting position (no engine move)
@@ -224,6 +299,7 @@ function ChessBoard() {
       clearTimeout(engineTimerRef.current);
       engineTimerRef.current = null;
     }
+    engineBusyRef.current = false;
     window.luna.initEngine();
     setBoard(parseFen(INITIAL_FEN));
     setSelectedSquare(null);
@@ -247,7 +323,7 @@ function ChessBoard() {
     resetBoard();
     setGameStarted(true);
     if (side === "black") {
-      engineTimerRef.current = setTimeout(() => engineReply(parseFen(INITIAL_FEN)), 100);
+      scheduleEngineReply(parseFen(INITIAL_FEN));
     }
   }
 
@@ -278,7 +354,7 @@ function ChessBoard() {
     setLastMove([[fromRow, fromCol], [toRow, toCol]]);
 
     // Engine response after promotion
-    engineTimerRef.current = setTimeout(() => engineReply(board), 100);
+    scheduleEngineReply(board);
   }
 
 
@@ -316,6 +392,7 @@ function handleUndo() {
       clearTimeout(engineTimerRef.current);
       engineTimerRef.current = null;
     }
+    engineBusyRef.current = false;
 
     const stack = [...moveStack];
     const last = stack[stack.length - 1];
@@ -353,12 +430,13 @@ function handleUndo() {
     const humanSide = playerSide === "white" ? 0 : 1;
     if (window.luna.getSideToMove() !== humanSide) {
       const boardBeforeEngine = parseFen(window.luna.getFen());
-      engineTimerRef.current = setTimeout(() => engineReply(boardBeforeEngine), 100);
+      scheduleEngineReply(boardBeforeEngine);
     }
   }
 
   function handleClick(displayRow, displayCol) {
     if (gameStatus !== "playing") return;
+    if (engineTimerRef.current || engineBusyRef.current) return; // engine is moving
 
     // The board is rendered flipped for black – map display -> board coords
     const row = boardFlipped ? 7 - displayRow : displayRow;
@@ -428,7 +506,7 @@ function handleUndo() {
       updateCheckStatus();
 
       // Engine response
-      engineTimerRef.current = setTimeout(() => engineReply(board), 100);
+      scheduleEngineReply(board);
     } else {
       playSound("illegal");
       setSelectedSquare(null);
@@ -593,9 +671,19 @@ function handleUndo() {
           </button>
         </div>
 
-        {/* Move history – clean table */}
-        <div className="move-history">
-          <h3>Move History</h3>
+        {/* Move history – clean table with copy support */}
+        <div className="move-history" ref={moveListRef}>
+          <div className="move-history-header">
+            <h3>Move History</h3>
+            <button
+              className="copy-pgn-btn"
+              onClick={copyPgn}
+              disabled={moveHistory.length === 0}
+              title="Copy the game moves (PGN) to your clipboard"
+            >
+              {copied ? "Copied!" : "Copy PGN"}
+            </button>
+          </div>
           <div className="move-table">
             <table>
               <thead>

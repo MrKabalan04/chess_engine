@@ -858,7 +858,7 @@ int Board::evaluate()
                 int bkRank = bk >> 3, bkFile = bk & 7;
                 int wkDist = abs(wkRank - rank) + abs(wkFile - file);
                 int bkDist = abs(bkRank - rank) + abs(bkFile - file);
-                eg += (bkDist - wkDist) * 4;
+                eg += (bkDist - wkDist) * 10;
             }
 
             bb &= bb - 1;
@@ -896,7 +896,7 @@ int Board::evaluate()
                 int bkRank = bk >> 3, bkFile = bk & 7;
                 int wkDist = abs(wkRank - rank) + abs(wkFile - file);
                 int bkDist = abs(bkRank - rank) + abs(bkFile - file);
-                eg -= (wkDist - bkDist) * 4;
+                eg -= (wkDist - bkDist) * 10;
             }
 
             bb &= bb - 1;
