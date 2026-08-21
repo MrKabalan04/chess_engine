@@ -86,6 +86,9 @@ function ChessBoard() {
   const [lastMove, setLastMove] = useState(null);
   const engineTimerRef = useRef(null);
   const engineBusyRef = useRef(false);
+  // Mirrors playerSide for code running in timeouts/closures, which would
+  // otherwise capture a stale value from the render that scheduled them.
+  const playerSideRef = useRef("white");
   const moveListRef = useRef(null);
   const [copied, setCopied] = useState(false);
 
@@ -194,9 +197,17 @@ function ChessBoard() {
 
   // Schedule exactly one engine reply; if a reply is already pending (or
   // in flight), ignore the new request so plies are never recorded twice.
-  function scheduleEngineReply(boardBefore) {
+  function scheduleEngineReply(boardBefore, tries = 0) {
     if (engineTimerRef.current || engineBusyRef.current) return;
-    engineTimerRef.current = setTimeout(() => engineReply(boardBefore), 100);
+    engineTimerRef.current = setTimeout(() => {
+      if (!window.luna) {
+        // Engine still loading – retry instead of silently dropping the move
+        engineTimerRef.current = null;
+        if (tries < 100) scheduleEngineReply(boardBefore, tries + 1);
+        return;
+      }
+      engineReply(boardBefore);
+    }, 100);
   }
 
   // Rebuild the white/black paired history from the flat ply stack
@@ -246,7 +257,7 @@ function ChessBoard() {
     if (engineBusyRef.current) return;   // already producing a reply
     engineBusyRef.current = true;
     try {
-      const engineSide = playerSide === "white" ? 1 : 0;
+      const engineSide = playerSideRef.current === "white" ? 1 : 0;
       if (window.luna.getSideToMove() !== engineSide) return; // not our turn
       const bestMove = window.luna.getBestMove();
       if (bestMove && bestMove.length >= 4) {
@@ -318,6 +329,7 @@ function ChessBoard() {
   // Start a fresh game as the given side. If the human plays black,
   // the engine (white) makes the opening move.
   function playAs(side) {
+    playerSideRef.current = side;   // update ref first so scheduled replies see the new side
     setPlayerSide(side);
     resetBoard();
     setGameStarted(true);
@@ -397,7 +409,7 @@ function handleUndo() {
     const last = stack[stack.length - 1];
     // The engine plays the opposite side. If the engine just replied,
     // take back both plies, otherwise just the player's ply.
-    const engineColor = playerSide === "white" ? "black" : "white";
+    const engineColor = playerSideRef.current === "white" ? "black" : "white";
     const pliesToRemove = last.side === engineColor ? Math.min(2, stack.length) : 1;
 
     for (let i = 0; i < pliesToRemove; i++) {
@@ -426,7 +438,7 @@ function handleUndo() {
 
     // If the undo landed back on the engine's turn (e.g. player is black and
     // took back the only opening move), let the engine move again.
-    const humanSide = playerSide === "white" ? 0 : 1;
+    const humanSide = playerSideRef.current === "white" ? 0 : 1;
     if (window.luna.getSideToMove() !== humanSide) {
       const boardBeforeEngine = parseFen(window.luna.getFen());
       scheduleEngineReply(boardBeforeEngine);
