@@ -16,6 +16,13 @@ uint64_t GenerateMoves::rookTable[64][4096];
 uint64_t GenerateMoves::bishopTable[64][512];
 TTEntry GenerateMoves::transpositionTable[TT_SIZE];
 
+int8_t GenerateMoves::egKQ[2][64][64][64];
+int8_t GenerateMoves::egKR[2][64][64][64];
+bool   GenerateMoves::egKQbuilt = false;
+bool   GenerateMoves::egKRbuilt = false;
+int8_t GenerateMoves::egKP[2][64][64][64];
+bool   GenerateMoves::egKPbuilt = false;
+
 void GenerateMoves::init() {
 
     static const uint64_t rookMagicsLocal[64] = {
@@ -1023,7 +1030,14 @@ int GenerateMoves::evalFull(Board& board) const
 
     if (board.sideToMove == 1) bonus = -bonus;
 
-    return base + bonus;
+    int total = base + bonus;
+
+    // 50-move pressure: as the draw approaches, shrink the eval toward 0 so a
+    // winning side feels urgency to progress instead of shuffling.
+    if (board.halfMoveClock > 80)
+        total = total * (100 - board.halfMoveClock) / 20;
+
+    return total;
 }
 
 // ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
@@ -1208,29 +1222,42 @@ int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
     if (searchAborted) return 0;
     if (board.isInsufficientMaterial()) return 0;
     if (board.halfMoveClock >= 100) return 0;
-    if (board.isThreefoldRepetition()) return -10;
+    if (board.isThreefoldRepetition()) return 0;
 
+    // When in check we must search ALL evasions (stand-pat is not valid:
+    // the position may be lost or even mated). Otherwise stand-pat + captures.
+    bool qInCheck = isInCheck(board, board.sideToMove);
     int standPat = evalFull(board);
-    if (standPat >= beta) return beta;
-    if (standPat > alpha) alpha = standPat;
 
-    // Delta pruning: skip if even a queen capture can't raise alpha
-    if (standPat + 975 < alpha) return alpha;
+    MoveList moves;
+    if (!qInCheck)
+    {
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
 
-    MoveList captures;
-    generateCaptures(board, board.sideToMove, captures);
-    orderCaptures(captures, board);
+        // Delta pruning: skip if even a queen capture can't raise alpha
+        if (standPat + 975 < alpha) return alpha;
+
+        generateCaptures(board, board.sideToMove, moves);
+        orderCaptures(moves, board);
+    }
+    else
+    {
+        generateAllMoves(board, board.sideToMove, moves);
+        orderMoves(moves, board, ply, Move(0, 0, NORMAL));
+    }
 
     int side     = board.sideToMove;
     int opponent = side ^ 1;
+    int legalCount = 0;
 
-    for (int i = 0; i < captures.count; i++)
+    for (int i = 0; i < moves.count; i++)
     {
-        Move move = captures.moves[i];
+        Move move = moves.moves[i];
         bool isPromotion = (move.getType() >= PROMOT_QUEEN);
 
-        
-        if (!isPromotion && move.getType() != EN_PASSANT && seeCapture(board, move) < 0)
+        // SEE pruning only applies to captures in non-check nodes
+        if (!qInCheck && !isPromotion && move.getType() != EN_PASSANT && seeCapture(board, move) < 0)
             continue;
 
         board.makeMove(move);
@@ -1245,6 +1272,7 @@ int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
             continue;
         }
 
+        legalCount++;
         int score = -quiescence(board, -beta, -alpha, ply + 1);
         board.undoMove();
 
@@ -1253,6 +1281,10 @@ int GenerateMoves::quiescence(Board& board, int alpha, int beta, int ply)
         if (score >= beta) return beta;
         if (score > alpha) alpha = score;
     }
+
+    // In check with no legal evasion = checkmate found at the horizon
+    if (qInCheck && legalCount == 0)
+        return -99000 + ply;
 
     return alpha;
 }
@@ -1272,7 +1304,7 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     // ?????? Draw detection ????????????????????????????????????????????????????????????????????????????????????????????????????????????
     if (board.isInsufficientMaterial()) return 0;
     if (board.halfMoveClock >= 100) return 0;
-    if (ply > 0 && board.isThreefoldRepetition()) return -10;
+    if (ply > 0 && board.isThreefoldRepetition()) return 0;
 
     int originalAlpha = alpha;
     bool isPV  = (beta - alpha) > 1;
@@ -1302,7 +1334,7 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
     // ?????? Check extension ?????????????????????????????????????????????????????????????????????????????????????????????????????????
     bool inCheck = isInCheck(board, board.sideToMove);
-    if (inCheck) depth++;
+    if (inCheck && ply < 64) depth++;   // capped: unbounded extensions explode in perpetual-check lines
 
     // ?????? Static eval ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
     int staticEval = evalFull(board);
@@ -1353,7 +1385,9 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 
         if (bigPieces >= 1)
         {
-            int R = 3 + depth / 4 + std::min(3, (staticEval - beta) / 150);
+            // Gentler reduction: the old R (up to 9 at depth 12) pruned real
+            // deep threats out of the window and caused missed tactics.
+            int R = 3 + depth / 6 + std::min(2, (staticEval - beta) / 250);
             board.makeNullMove();
             int nullScore = -negamax(board, depth - 1 - R, -beta, -beta + 1, ply + 1);
             board.undoNullMove();
@@ -1537,8 +1571,16 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
             ttEntry.depth <= depth ||
             ttEntry.age != searchAge)
         {
+            // Mate scores are stored relative to the ROOT ply so that probes
+            // at any ply can shift them back (probe does score -=/+ ply).
+            // Storing raw node scores corrupts mate distances through
+            // transpositions and produces phantom "mate N" results.
+            int storeScore = bestScore;
+            if (storeScore >  90000) storeScore += ply;
+            else if (storeScore < -90000) storeScore -= ply;
+
             ttEntry.zobristHash = board.zobristHash;
-            ttEntry.score       = bestScore;
+            ttEntry.score       = storeScore;
             ttEntry.depth       = depth;
             ttEntry.flag        = flag;
             ttEntry.bestMove    = bestMove;
@@ -1547,6 +1589,570 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
     }
 
     return bestScore;
+}
+
+// ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+// BARE-MATE RETROGRADE TABLEBASE (KQ-vs-K / KR-vs-K)
+//
+// Two fully-enumerated tables (queen, rook) built lazily by reverse
+// retrograde BFS.  White is the strong side.  State key:
+//     key = (stm<<18) | (wk<<12) | (bk<<6) | mq
+// where stm = side to move (0 white, 1 black), wk = white king square,
+// bk = black king square, mq = strong major square.  Value stored:
+//     0 = draw / unknown / illegal
+//     1 = black is checkmated (black to move, no legal move)
+//     n>1 = plies until forced mate for white from this position.
+// Black-strong positions are handled by the caller via a rank-flip
+// (sq ^ 56) plus king-role swap (symmetric about colour).
+//
+// All kings-move legality is evaluated with bitboards; a "major capture"
+// by the black king leaves the state space (K-vs-K draw), so those black
+// states can never be losses.  Stalemates (either side) are draws.
+// ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+static inline int bareKey(int stm, int wk, int bk, int mq)
+{
+    return (stm << 18) | (wk << 12) | (bk << 6) | mq;
+}
+
+void GenerateMoves::buildBareMateTable(bool isRook)
+{
+    if (isRook ? egKRbuilt : egKQbuilt) return;
+    if (isRook) egKRbuilt = true; else egKQbuilt = true;
+
+    int8_t* T = isRook ? &egKR[0][0][0][0] : &egKQ[0][0][0][0];
+    const int N = 1 << 19;
+
+    std::vector<int8_t>  val(N, 0);
+    std::vector<int16_t> down(N, 0);
+    std::vector<uint8_t> canDraw(N, 0);
+    std::vector<uint8_t> maxChild(N, 0);
+
+    // line-clear test: is `target` attacked by the major at `from`
+    // given the blocker bitboard `occ` (which must NOT contain `target`
+    // or `from` themselves being endpoints... callers ensure blockers).
+    auto attacked = [&](int from, int target, uint64_t blockers) -> bool {
+        uint64_t occ = blockers | (1ULL << from);
+        uint64_t att = isRook ? getRookAttacks(from, occ)
+                              : getQueenAttacks(from, occ);
+        return (att >> target) & 1ULL;
+    };
+
+    // ---- pass 1: down counts, canDraw flags, seed checkmates ----
+    // Values are processed in strictly increasing order via buckets so the
+    // DTM labels stay consistent (a black loss value is 1+max over its
+    // children, a white win value is 1+min). KRK max DTM is ~32 plies.
+    const int MAXD = 66;
+    std::vector<std::vector<int>> bucket(MAXD + 2);
+
+    for (int key = 0; key < N; key++) {
+        int stm = key >> 18;
+        int wk  = (key >> 12) & 63;
+        int bk  = (key >> 6)  & 63;
+        int mq  = key & 63;
+
+        if (wk == bk || mq == wk || mq == bk) continue;
+        if (kingMasks[wk] & (1ULL << bk)) continue;   // illegal: kings adjacent
+
+        if (stm == 1) {
+            // Black to move: build its legal king moves. Targets in-space
+            // are counted for `down`; captures of the (undefended) major
+            // exit to a draw so they set canDraw.
+            bool inCheck = (kingMasks[wk] & (1ULL << bk))
+                        || attacked(mq, bk, 1ULL << wk);
+            bool hadCapture = false;
+            int  kids = 0;
+            uint64_t km = kingMasks[bk];
+            while (km) {
+                int s = __builtin_ctzll(km); km &= km - 1;
+                if (s == wk) continue;                     // can't take the king
+                if (s == mq) {
+                    bool defended = (kingMasks[wk] & (1ULL << mq)) != 0;
+                    if (!defended) hadCapture = true;      // takes major -> draw
+                    continue;
+                }
+                if (kingMasks[wk] & (1ULL << s)) continue; // move adjacent white king
+                if (attacked(mq, s, 1ULL << wk)) continue; // move into check from major
+                kids++;
+            }
+            down[key] = kids;
+            if (hadCapture) canDraw[key] = 1;
+            if (kids == 0 && !hadCapture && inCheck) {
+                val[key] = 1;                               // checkmate seed
+                bucket[1].push_back(key);
+            }
+        }
+    }
+
+    // ---- retrograde BFS (value-ordered buckets) ----
+    for (int d = 1; d <= MAXD; d++) {
+        for (size_t bi = 0; bi < bucket[d].size(); bi++) {
+            int key = bucket[d][bi];
+            int v   = d;
+            int stm = key >> 18;
+            int wk  = (key >> 12) & 63;
+            int bk  = (key >> 6)  & 63;
+            int mq  = key & 63;
+
+            if (stm == 1) {
+                // Black loss solved: every WHITE predecessor is a win in v+1
+                // plies (first discovery in value order is the minimum).
+                // (a) white king moved last: predecessor king was adjacent to wk.
+                uint64_t km = kingMasks[wk];
+                while (km) {
+                    int pwk = __builtin_ctzll(km); km &= km - 1;
+                    if (pwk == bk || pwk == mq) continue;
+                    if (kingMasks[pwk] & (1ULL << bk)) continue; // P invalid: bk in check
+                    if (attacked(mq, bk, 1ULL << pwk)) continue; // P invalid: bk in check
+                    int pkey = bareKey(0, pwk, bk, mq);
+                    if (val[pkey] == 0 && v + 1 <= MAXD) {
+                        val[pkey] = (int8_t)(v + 1);
+                        bucket[v + 1].push_back(pkey);
+                    }
+                }
+                // (b) major moved last: predecessor major on any clear square
+                // along a ray from mq (stop at first of wk/bk).
+                for (int dir = 1; dir <= 8; dir++) {
+                    if (isRook && dir > 4) continue;     // rook has no diagonals
+                    int rd = 0, cd = 0;
+                    if      (dir == 1) { rd = -1; cd = 0; }
+                    else if (dir == 2) { rd = 1;  cd = 0; }
+                    else if (dir == 3) { rd = 0;  cd = -1; }
+                    else if (dir == 4) { rd = 0;  cd = 1; }
+                    else if (dir == 5) { rd = -1; cd = -1; }
+                    else if (dir == 6) { rd = -1; cd = 1; }
+                    else if (dir == 7) { rd = 1;  cd = -1; }
+                    else               { rd = 1;  cd = 1; }
+                    int r = mq >> 3, c = mq & 7;
+                    while (true) {
+                        r += rd; c += cd;
+                        if (r < 0 || r > 7 || c < 0 || c > 7) break;
+                        int sq = r * 8 + c;
+                        if (sq == wk || sq == bk) break;      // blocked
+                        // P = (0,wk,bk,pmq=sq); bk must not be in check there
+                        if (!attacked(sq, bk, 1ULL << wk)) {
+                            int pkey = bareKey(0, wk, bk, sq);
+                            if (val[pkey] == 0 && v + 1 <= MAXD) {
+                                val[pkey] = (int8_t)(v + 1);
+                                bucket[v + 1].push_back(pkey);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // White win solved: BLACK predecessors lose once every
+                // in-space reply is a win (down hits 0 and no draw escape).
+                uint64_t km = kingMasks[bk];
+                while (km) {
+                    int pbk = __builtin_ctzll(km); km &= km - 1;
+                    if (pbk == wk || pbk == mq) continue;
+                    if (kingMasks[wk] & (1ULL << bk)) continue; // S invalid: never
+                    // legality of black move pbk->bk: bk must not be attacked
+                    if (attacked(mq, bk, 1ULL << wk)) continue; // moved into check
+                    if (kingMasks[pbk] & (1ULL << wk)) continue; // P invalid: wk in check
+                    int pkey = bareKey(1, wk, pbk, mq);
+                    if (val[pkey] == 0) {
+                        down[pkey]--;
+                        if ((int)maxChild[pkey] < v) maxChild[pkey] = (uint8_t)v;
+                        if (down[pkey] == 0 && !canDraw[pkey]) {
+                            int nv = (int)maxChild[pkey] + 1;
+                            if (nv > MAXD) nv = MAXD;
+                            val[pkey] = (int8_t)nv;
+                            bucket[nv].push_back(pkey);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (int key = 0; key < N; key++)
+        if (val[key]) T[key] = val[key];
+}
+
+int GenerateMoves::bareMateDTM(bool isRook, int stm, int wk, int bk, int mq) const
+{
+    if (wk == bk || mq == wk || mq == bk) return 0;
+    if (kingMasks[wk] & (1ULL << bk)) return 0;
+    const int8_t* T = isRook ? &egKR[0][0][0][0] : &egKQ[0][0][0][0];
+    return T[bareKey(stm, wk, bk, mq)];
+}
+
+// Full controller: WHITE-strong DTM table queried in the correct
+// orientation (black-strong positions use a rank-flip + king-role swap).
+Move GenerateMoves::bareMateMove(Board &board)
+{
+    int winner = board.sideToMove;
+
+    int wR = __builtin_popcountll(board.whiteRooks);
+    int wQ = __builtin_popcountll(board.whiteQueen);
+    int bR = __builtin_popcountll(board.blackRooks);
+    int bQ = __builtin_popcountll(board.blackQueen);
+
+    bool isRook;
+    if (winner == 0) {
+        if (bQ != 0 || bR != 0) return Move(0, 0, NORMAL);
+        if (wQ == 1 && wR == 0)      isRook = false;
+        else if (wR == 1 && wQ == 0) isRook = true;
+        else return Move(0, 0, NORMAL);
+    } else {
+        if (wQ != 0 || wR != 0) return Move(0, 0, NORMAL);
+        if (bQ == 1 && bR == 0)      isRook = false;
+        else if (bR == 1 && bQ == 0) isRook = true;
+        else return Move(0, 0, NORMAL);
+    }
+
+    int ourKing, theirKing, majorSq;
+    if (winner == 0) {
+        ourKing   = __builtin_ctzll(board.whiteKing);
+        theirKing = __builtin_ctzll(board.blackKing);
+        majorSq   = isRook ? __builtin_ctzll(board.whiteRooks)
+                           : __builtin_ctzll(board.whiteQueen);
+    } else {
+        ourKing   = __builtin_ctzll(board.blackKing);
+        theirKing = __builtin_ctzll(board.whiteKing);
+        majorSq   = isRook ? __builtin_ctzll(board.blackRooks)
+                           : __builtin_ctzll(board.blackQueen);
+    }
+
+    // white-strong frame
+    int wkT, bkT, mqT;
+    if (winner == 0) {
+        wkT = ourKing; bkT = theirKing; mqT = majorSq;
+    } else {
+        wkT = ourKing ^ 56; bkT = theirKing ^ 56; mqT = majorSq ^ 56;
+    }
+
+    buildBareMateTable(isRook);
+    // In the white-strong frame the strong side is always "white to move":
+    // stm=0 for the current position, stm=1 for every child (our move hands
+    // the turn to the weak side). Independent of which real colour is strong.
+    int cur = bareMateDTM(isRook, 0, wkT, bkT, mqT);
+
+    MoveList legal = generateLegalMoves(board, winner);
+    if (legal.count == 0) return Move(0, 0, NORMAL);
+
+    auto childVal = [&](int w, int b, int m) -> int {
+        // w = strong king, b = weak king, m = major (physical squares);
+        // child is weak-side-to-move (stm=1); black-strong needs the flip.
+        if (winner == 0) return bareMateDTM(isRook, 1, w, b, m);
+        return bareMateDTM(isRook, 1, w ^ 56, b ^ 56, m ^ 56);
+    };
+
+    Move best(0, 0, NORMAL);
+    int bestVal = 300;
+
+    for (int i = 0; i < legal.count; i++) {
+        board.makeMove(legal.moves[i]);
+        int wkC, bkC, mqC;
+        if (winner == 0) {
+            wkC = __builtin_ctzll(board.whiteKing);
+            bkC = __builtin_ctzll(board.blackKing);
+            mqC = isRook ? __builtin_ctzll(board.whiteRooks)
+                         : __builtin_ctzll(board.whiteQueen);
+        } else {
+            wkC = __builtin_ctzll(board.blackKing);
+            bkC = __builtin_ctzll(board.whiteKing);
+            mqC = isRook ? __builtin_ctzll(board.blackRooks)
+                         : __builtin_ctzll(board.blackQueen);
+        }
+        board.undoMove();
+        int cv = childVal(wkC, bkC, mqC);
+        if (cv > 0 && cv < bestVal) {
+            bestVal = cv;
+            best = legal.moves[i];
+        }
+    }
+
+    if (cur > 0 && best.data != 0) {
+        std::cout << "info string Tablebase mate (" << cur << " plies)\n";
+        return best;
+    }
+    return Move(0, 0, NORMAL);
+}
+
+// ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+// KPK TABLEBASE (lone pawn vs bare king): distance to SAFE promotion
+//
+// Same retrograde bucket BFS as the bare-mate tables. White is the pawn
+// side; state key = (stm<<18)|(wk<<12)|(bk<<6)|psq. Terminal: a white
+// promotion push whose fresh queen cannot be captured by the bare king
+// and which does not stalemate it (underpromotion is never needed in a
+// won KPK). A black king capture of an undefended pawn exits to a drawn
+// K-vs-K, so those states carry canDraw and can never become losses.
+// Stalemates are draws. KPK has no pre-promotion checkmates (a lone pawn
+// cannot mate), so there are no mate seeds. Black-strong positions are
+// handled by the caller via a rank-flip (sq ^ 56).
+// ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+static inline int kpkKey(int stm, int wk, int bk, int ps)
+{
+    return (stm << 18) | (wk << 12) | (bk << 6) | ps;
+}
+
+void GenerateMoves::buildKpkTable()
+{
+    if (egKPbuilt) return;
+    egKPbuilt = true;
+
+    int8_t* T = &egKP[0][0][0][0];
+    const int N = 1 << 19;
+
+    std::vector<int8_t>  val(N, 0);
+    std::vector<int16_t> down(N, 0);
+    std::vector<uint8_t> canDraw(N, 0);
+    std::vector<uint8_t> maxChild(N, 0);
+
+    // squares attacked by a white pawn on s
+    auto pawnAtt = [](int s) -> uint64_t {
+        uint64_t a = 0;
+        int f = s & 7;
+        if (s + 7 < 64 && f > 0) a |= 1ULL << (s + 7);
+        if (s + 9 < 64 && f < 7) a |= 1ULL << (s + 9);
+        return a;
+    };
+
+    const int MAXD = 120;
+    std::vector<std::vector<int>> bucket(MAXD + 2);
+
+    // ---- pass 1: down counts, canDraw flags, seed safe promotions ----
+    for (int key = 0; key < N; key++) {
+        int stm = key >> 18;
+        int wk  = (key >> 12) & 63;
+        int bk  = (key >> 6)  & 63;
+        int ps  = key & 63;
+
+        if (wk == bk || ps == wk || ps == bk) continue;
+        if (kingMasks[wk] & (1ULL << bk)) continue;
+        int pr = ps >> 3;
+        if (pr == 0 || pr == 7) continue;          // impossible pawn square
+
+        if (stm == 0) {
+            // seed: pawn on rank 7 with a SAFE promotion push
+            if (pr != 6) continue;
+            int q = ps + 8;
+            if (q == bk) continue;                        // push blocked
+            if (kingMasks[bk] & (1ULL << q)) continue;    // Q capturable
+            uint64_t att = getQueenAttacks(q, 1ULL << wk);
+            bool inCheck = (att >> bk) & 1ULL;
+            bool hasMove = false;
+            uint64_t km = kingMasks[bk];
+            while (km) {
+                int s = __builtin_ctzll(km); km &= km - 1;
+                if (s == wk || s == q) continue;
+                if (kingMasks[wk] & (1ULL << s)) continue;
+                if ((att >> s) & 1ULL) continue;
+                hasMove = true; break;
+            }
+            if (!hasMove && !inCheck) continue;           // stalemate: draw
+            val[key] = 1;
+            bucket[1].push_back(key);
+        } else {
+            // black to move: count in-space replies, flag pawn-capture escape
+            uint64_t patt = pawnAtt(ps);
+            bool hadCapture = false;
+            int kids = 0;
+            uint64_t km = kingMasks[bk];
+            while (km) {
+                int s = __builtin_ctzll(km); km &= km - 1;
+                if (s == wk) continue;
+                if (s == ps) {
+                    if (!(kingMasks[wk] & (1ULL << ps))) hadCapture = true;
+                    continue;
+                }
+                if (kingMasks[wk] & (1ULL << s)) continue;   // adjacent white K
+                if ((patt >> s) & 1ULL) continue;            // pawn-controlled
+                kids++;
+            }
+            down[key] = kids;
+            if (hadCapture) canDraw[key] = 1;
+        }
+    }
+
+    // ---- retrograde BFS (value-ordered buckets) ----
+    for (int d = 1; d <= MAXD; d++) {
+        for (size_t bi = 0; bi < bucket[d].size(); bi++) {
+            int key = bucket[d][bi];
+            int v   = d;
+            int stm = key >> 18;
+            int wk  = (key >> 12) & 63;
+            int bk  = (key >> 6)  & 63;
+            int ps  = key & 63;
+
+            if (stm == 1) {
+                // black cannot avoid promotion in v: every WHITE predecessor
+                // wins in v+1 (first discovery in value order is minimal).
+                // (a) white king moved last
+                uint64_t km = kingMasks[wk];
+                while (km) {
+                    int pwk = __builtin_ctzll(km); km &= km - 1;
+                    if (pwk == bk || pwk == ps) continue;
+                    if (kingMasks[pwk] & (1ULL << bk)) continue; // P invalid
+                    int pkey = kpkKey(0, pwk, bk, ps);
+                    if (val[pkey] == 0 && v + 1 <= MAXD) {
+                        val[pkey] = (int8_t)(v + 1);
+                        bucket[v + 1].push_back(pkey);
+                    }
+                }
+                // (b) pawn pushed last: single or double
+                int pr = ps >> 3;
+                if (pr >= 2) {
+                    int pp = ps - 8;
+                    if (pp != wk && pp != bk) {
+                        int pkey = kpkKey(0, wk, bk, pp);
+                        if (val[pkey] == 0 && v + 1 <= MAXD) {
+                            val[pkey] = (int8_t)(v + 1);
+                            bucket[v + 1].push_back(pkey);
+                        }
+                    }
+                }
+                if (pr == 3) {
+                    int pp = ps - 16, mid = ps - 8;
+                    if (mid != wk && mid != bk && pp != wk && pp != bk) {
+                        int pkey = kpkKey(0, wk, bk, pp);
+                        if (val[pkey] == 0 && v + 1 <= MAXD) {
+                            val[pkey] = (int8_t)(v + 1);
+                            bucket[v + 1].push_back(pkey);
+                        }
+                    }
+                }
+            } else {
+                // white win solved: BLACK predecessors lose once every
+                // in-space reply is a win (and no pawn-capture escape).
+                uint64_t km = kingMasks[bk];
+                uint64_t patt = pawnAtt(ps);
+                while (km) {
+                    int pbk = __builtin_ctzll(km); km &= km - 1;
+                    if (pbk == wk || pbk == ps) continue;
+                    if (kingMasks[wk] & (1ULL << pbk)) continue; // P invalid
+                    if ((patt >> bk) & 1ULL) continue;   // moved into pawn check
+                    int pkey = kpkKey(1, wk, pbk, ps);
+                    if (val[pkey] == 0) {
+                        down[pkey]--;
+                        if ((int)maxChild[pkey] < v) maxChild[pkey] = (uint8_t)v;
+                        if (down[pkey] == 0 && !canDraw[pkey]) {
+                            int nv = (int)maxChild[pkey] + 1;
+                            if (nv > MAXD) nv = MAXD;
+                            val[pkey] = (int8_t)nv;
+                            bucket[nv].push_back(pkey);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (int key = 0; key < N; key++)
+        if (val[key]) T[key] = val[key];
+}
+
+int GenerateMoves::kpkDTM(int stm, int wk, int bk, int ps) const
+{
+    if (wk == bk || ps == wk || ps == bk) return 0;
+    if (kingMasks[wk] & (1ULL << bk)) return 0;
+    int pr = ps >> 3;
+    if (pr == 0 || pr == 7) return 0;
+    return egKP[stm][wk][bk][ps];
+}
+
+// Gated controller: exactly one pawn (ours), no other pieces, bare enemy
+// king. Returns the shortest safe-promotion move, or null when the
+// position doesn't match / is tablebase-drawn.
+Move GenerateMoves::kpkMove(Board &board)
+{
+    int winner = board.sideToMove;
+    uint64_t myPawns  = (winner == 0) ? board.whitePawns : board.blackPawns;
+    uint64_t oppPawns = (winner == 0) ? board.blackPawns : board.whitePawns;
+    uint64_t myOthers = (winner == 0)
+        ? (board.whiteQueen | board.whiteRooks | board.whiteBishops | board.whiteKnights)
+        : (board.blackQueen | board.blackRooks | board.blackBishops | board.blackKnights);
+    uint64_t oppOthers = (winner == 0)
+        ? (board.blackQueen | board.blackRooks | board.blackBishops | board.blackKnights)
+        : (board.whiteQueen | board.whiteRooks | board.whiteBishops | board.whiteKnights);
+
+    if (__builtin_popcountll(myPawns) != 1) return Move(0, 0, NORMAL);
+    if (myOthers)                           return Move(0, 0, NORMAL);
+    if (oppPawns || oppOthers)              return Move(0, 0, NORMAL);
+
+    int ourKing, theirKing, pawnSq;
+    if (winner == 0) {
+        ourKing   = __builtin_ctzll(board.whiteKing);
+        theirKing = __builtin_ctzll(board.blackKing);
+    } else {
+        ourKing   = __builtin_ctzll(board.blackKing);
+        theirKing = __builtin_ctzll(board.whiteKing);
+    }
+    pawnSq = __builtin_ctzll(myPawns);
+
+    // canonical white-strong frame
+    int wkT, bkT, psT;
+    if (winner == 0) { wkT = ourKing;     bkT = theirKing;     psT = pawnSq; }
+    else             { wkT = ourKing ^ 56; bkT = theirKing ^ 56; psT = pawnSq ^ 56; }
+
+    buildKpkTable();
+    int cur = kpkDTM(0, wkT, bkT, psT);
+    if (cur <= 0) return Move(0, 0, NORMAL);      // drawn / unreachable
+
+    MoveList legal = generateLegalMoves(board, winner);
+    if (legal.count == 0) return Move(0, 0, NORMAL);
+
+    Move best(0, 0, NORMAL);
+    int bestVal = 300;
+
+    for (int i = 0; i < legal.count; i++) {
+        Move m = legal.moves[i];
+        int type = m.getType();
+
+        int cv = 0;
+        if (type == PROMOT_QUEEN) {
+            // safety check mirrors the table seed test, evaluated live
+            board.makeMove(m);
+            int q  = m.getTo();
+            int lk = __builtin_ctzll((winner == 0) ? board.blackKing
+                                                   : board.whiteKing);
+            int ok = __builtin_ctzll((winner == 0) ? board.whiteKing
+                                                   : board.blackKing);
+            uint64_t att = getQueenAttacks(q, 1ULL << ok);
+            bool inCheck = (att >> lk) & 1ULL;
+            bool hasMove = false;
+            uint64_t km = kingMasks[lk];
+            while (km) {
+                int s = __builtin_ctzll(km); km &= km - 1;
+                if (s == ok || s == q) continue;
+                if (kingMasks[ok] & (1ULL << s)) continue;
+                if ((att >> s) & 1ULL) continue;
+                hasMove = true; break;
+            }
+            board.undoMove();
+            if ((hasMove || inCheck) && !(kingMasks[lk] & (1ULL << q)))
+                cv = 1;
+        } else if (type != PROMOT_ROOK && type != PROMOT_BISHOP &&
+                   type != PROMOT_KNIGHT) {
+            board.makeMove(m);
+            int wC, bC, pC;
+            if (winner == 0) {
+                wC = __builtin_ctzll(board.whiteKing);
+                bC = __builtin_ctzll(board.blackKing);
+                pC = board.whitePawns ? __builtin_ctzll(board.whitePawns) : -1;
+            } else {
+                wC = __builtin_ctzll(board.blackKing);
+                bC = __builtin_ctzll(board.whiteKing);
+                pC = board.blackPawns ? __builtin_ctzll(board.blackPawns) : -1;
+            }
+            board.undoMove();
+            if (pC >= 0) {
+                if (winner == 0) cv = kpkDTM(1, wC, bC, pC);
+                else             cv = kpkDTM(1, wC ^ 56, bC ^ 56, pC ^ 56);
+            }
+        }
+        // underpromotions: cv stays 0 (never required in a won KPK)
+
+        if (cv > 0 && cv < bestVal) { bestVal = cv; best = m; }
+    }
+
+    if (best.data != 0) {
+        std::cout << "info string KPK drive (" << cur << " plies to promotion)\n";
+        return best;
+    }
+    return Move(0, 0, NORMAL);
 }
 
 // ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
@@ -1569,6 +2175,14 @@ int GenerateMoves::negamax(Board& board, int depth, int alpha, int beta, int ply
 // ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 Move GenerateMoves::tryEndgameMateMove(Board &board)
 {
+    // ?? KPK: lone pawn vs bare king — proven drive to safe promotion ??
+    // The search shuffles here instead of running the pawn; the tablebase
+    // converts. Runs before the KQK/KRK gate (which requires no pawns).
+    {
+        Move kp = kpkMove(board);
+        if (kp.data != 0) return kp;
+    }
+
     // ?????? Detect KQ-vs-K / KR-vs-K, strong side to move ??????
     bool noPawnsMinors =
         (board.whitePawns | board.whiteKnights | board.whiteBishops
@@ -1590,6 +2204,18 @@ Move GenerateMoves::tryEndgameMateMove(Board &board)
     }
     if (!meStrong || !oppNone) return Move(0, 0, NORMAL);
 
+    // ?? Retrograde tablebase controller (KQvK / KRvK) ??
+    // Replaces the former forced-mate ID search: O(1) per move, provably
+    // forced, stalemate-free shortest-distance mate. Falls through to the
+    // greedy drive only for the rare positions the tables mark as draw.
+    {
+        Move tb = bareMateMove(board);
+        if (tb.data != 0) {
+            std::cout << "info string Tablebase mate drive\n";
+            return tb;
+        }
+    }
+
     int winner = board.sideToMove;
     int loser  = 1 - winner;
 
@@ -1606,40 +2232,88 @@ Move GenerateMoves::tryEndgameMateMove(Board &board)
 
     // ?? Forced-mate search (winner to move) ???????????????
     // The greedy one-ply pick misses mate-in-2/3 patterns (e.g. rook to the
-    // mate rank, or king to opposition). Try a tiny bounded full-width mate
-    // search first: tree is ~1-3M nodes for KQK/KRK, well inside budget.
+    // mate rank, or king to opposition) and gets stuck in corner shuffles
+    // once every move looks equal. Try an iterative-deepening mate search:
+    // deep enough to see the real net (up to mate-in-10), pruning non-check /
+    // non-approach moves so the tree stays small. Falls back to greedy.
     {
-        const int mateDepth = 3;   // winner plies examined
-        Move mateMove(0, 0, NORMAL);
+        const int MAX_D = 12;
+        Move rootMove(0, 0, NORMAL);
+        int bestFoundDepth = 0;
         long long mateNodes = 0;
+        bool aborted = false;
 
-        std::function<int(Board&, int, int)> force =
+        auto kdist = [](int a, int b) -> int {
+            return std::max(std::abs((a >> 3) - (b >> 3)), std::abs((a & 7) - (b & 7)));
+        };
+        auto loserKingSq = [loser](Board& b) -> int {
+            return __builtin_ctzll((loser == 0) ? b.whiteKing : b.blackKing);
+        };
+        auto ourKingSq = [winner](Board& b) -> int {
+            return __builtin_ctzll((winner == 0) ? b.whiteKing : b.blackKing);
+        };
+        auto loserMobility = [&](Board& b) -> int {
+            int lk = loserKingSq(b);
+            uint64_t att = kingMasks[ourKingSq(b)], bb, pbb =
+                (winner == 0) ? (b.whiteRooks | b.whiteQueen)
+                              : (b.blackRooks | b.blackQueen);
+            bb = pbb;
+            while (bb) {
+                int s = __builtin_ctzll(bb); bb &= bb - 1;
+                att |= (winner == 0) ? getRookAttacks(s, b.occupied)
+                                     : getRookAttacks(s, b.occupied);
+                if (winner == 0 ? (b.whiteQueen >> s & 1ULL) : (b.blackQueen >> s & 1ULL))
+                    att |= getQueenAttacks(s, b.occupied);
+            }
+            int mob = 0;
+            uint64_t km = kingMasks[lk] & ~b.occupied;
+            while (km) {
+                int s = __builtin_ctzll(km); km &= km - 1;
+                if (!(att >> s & 1ULL)) mob++;
+            }
+            return mob;
+        };
+
+        std::function<int(Board&, int, int)> ms =
             [&](Board& b, int mover, int d) -> int {
-                // 2 = winner forces mate, 0 = not proven
-                if (++mateNodes > 8000000) return 0;
+                // 2 = winner forces mate, 0 = unknown / not proven
+                if (aborted) return 0;
+                if (++mateNodes > 15000000) { aborted = true; return 0; }
                 if (d == 0) return 0;
                 MoveList L = generateLegalMoves(b, mover);
                 if (L.count == 0) return 0;
+
                 if (mover == winner) {
+                    int oldKD = kdist(ourKingSq(b), loserKingSq(b));
+                    int oldMob = loserMobility(b);
+                    const bool wide = (d <= 4);   // closing sequence: try everything
                     for (int i = 0; i < L.count; i++) {
                         b.makeMove(L.moves[i]);
+                        if (wide) {
+                            // keep
+                        } else {
+                            MoveList R = generateLegalMoves(b, loser);
+                            bool chk = isSquareAttacked(loserKingSq(b), winner, b);
+                            int newKD = kdist(ourKingSq(b), loserKingSq(b));
+                            (void)R;
+                            if (!chk && newKD >= oldKD && loserMobility(b) >= oldMob) {
+                                b.undoMove(); continue;   // pure shuffle — skip
+                            }
+                        }
                         MoveList R = generateLegalMoves(b, loser);
-                        bool mated = (R.count == 0) && isSquareAttacked(
-                            __builtin_ctzll((loser == 0) ? b.whiteKing : b.blackKing),
-                            winner, b);
-                        int r = mated ? 2 : force(b, loser, d - 1);
+                        bool mated = (R.count == 0) && isSquareAttacked(loserKingSq(b), winner, b);
+                        int r = mated ? 2 : ms(b, loser, d - 1);
                         b.undoMove();
                         if (r == 2) {
-                            if (d == mateDepth) mateMove = L.moves[i];
+                            if (d > bestFoundDepth && d == MAX_D) rootMove = L.moves[i];
                             return 2;
                         }
                     }
                     return 0;
                 } else {
-                    // loser to move: EVERY reply must still lose to us
                     for (int i = 0; i < L.count; i++) {
                         b.makeMove(L.moves[i]);
-                        int r = force(b, winner, d);
+                        int r = ms(b, winner, d);
                         b.undoMove();
                         if (r != 2) return 0;   // some reply survives
                     }
@@ -1647,9 +2321,26 @@ Move GenerateMoves::tryEndgameMateMove(Board &board)
                 }
             };
 
-        if (force(board, winner, mateDepth) == 2 && mateMove.data != 0) {
+        for (int d = 1; d <= MAX_D && !aborted; d++) {
+            MoveList root = generateLegalMoves(board, winner);
+            Move found(0, 0, NORMAL);
+            for (int i = 0; i < root.count; i++) {
+                board.makeMove(root.moves[i]);
+                MoveList R = generateLegalMoves(board, loser);
+                bool mated = (R.count == 0) && isSquareAttacked(loserKingSq(board), winner, board);
+                int r = mated ? 2 : ms(board, loser, d - 1);
+                board.undoMove();
+                if (r == 2) { found = root.moves[i]; break; }
+            }
+            if (!aborted && found.data != 0) {
+                bestFoundDepth = d;
+                rootMove = found;
+            }
+        }
+
+        if (!aborted && rootMove.data != 0) {
             std::cout << "info string Endgame forced mate\n";
-            return mateMove;
+            return rootMove;
         }
     }
 
@@ -1761,28 +2452,12 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
 
     // ?????? Time Management ?????????????????????????????????????????????????????????????????????????????????????????????????????????
     if (movetimeMs > 0) {
-        // Fixed time per move ("go movetime X") ??? use with small safety buffer
+        // Fixed time per move ("go movetime X") — respect the requested
+        // time exactly (small safety buffer). Previously an "endgame boost"
+        // multiplied this past the requested limit, making the engine take
+        // up to 1.6x longer than the caller asked for.
         timeLimitMs = movetimeMs - 20;
         if (timeLimitMs < 5) timeLimitMs = 5;
-
-        // Endgame precision: with few pieces the tree is narrow, so give up
-        // to 3.5x the fixed budget to convert won endgames instead of
-        // shuffling. Bare-mate endgames (Q/R/B vs K) reap the most: deeper
-        // search each move is exactly what clips the final mating window.
-        uint64_t minors = board.whiteKnights | board.blackKnights |
-                          board.whiteBishops | board.blackBishops;
-        uint64_t rooks  = board.whiteRooks   | board.blackRooks;
-        uint64_t queens = board.whiteQueen   | board.blackQueen;
-        int materialWeight = (int)__builtin_popcountll(minors) +
-                             2 * (int)__builtin_popcountll(rooks) +
-                             4 * (int)__builtin_popcountll(queens);
-        double egBoost = 1.0;
-        if      (materialWeight <=  4) egBoost = 3.5;
-        else if (materialWeight <=  8) egBoost = 2.8;
-        else if (materialWeight <= 12) egBoost = 2.0;
-        else if (materialWeight <= 16) egBoost = 1.4;
-        timeLimitMs = std::min((long long)5000,
-                               (long long)(timeLimitMs * egBoost));
     } else {
         // Tournament / sudden-death clock.
         if (myTimeLeftMs <= 0) myTimeLeftMs = 1000;
@@ -1871,13 +2546,19 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
         int  bestScoreThisDepth = -999999;
         int  aspirationFails    = 0;
 
+        // Best move from the previous aspiration pass. Retries must START
+        // from this move (searched first) — resetting to the stale
+        // absoluteBestMove let the first-generated quiet move win every
+        // tie in retry passes and discard a found mate.
+        Move passBest = absoluteBestMove;
+
         while (true)
         {
             checkTimeBudget();
             if (searchAborted) goto done;
 
             bestScoreThisDepth = -999999;
-            bestMoveThisDepth  = absoluteBestMove;
+            bestMoveThisDepth  = passBest;
 
             // Re-order so the current best candidate is searched first.
             orderMoves(legalRootMoves, board, 0, bestMoveThisDepth);
@@ -1908,6 +2589,14 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
             }
 
             if (searchAborted) goto done;
+
+            passBest = bestMoveThisDepth;
+
+            // A mate score is exact — never aspiration-retry it. Retrying
+            // re-searches every root move against a saturated window where
+            // all bounds tie, and the tie degenerates to move order.
+            if (bestScoreThisDepth > 90000 || bestScoreThisDepth < -90000)
+                break;
 
             // Widen window on fail ??? with a hard cap on retries
             if (bestScoreThisDepth <= prevScore - delta)
@@ -1964,15 +2653,14 @@ Move GenerateMoves::getBestMove(Board& board, int maxDepth,
                   << " nps "        << (nodesSearched * 1000 / elapsed)
                   << std::endl;
 
+        // Soft stop: don't start a new depth if we've used 65% of budget.
+        // (Starting a depth we don't finish is safe — the abort path returns
+        // the last fully-searched best move — so we can afford to use more
+        // of the allocated time than a conservative 50% rule.)
         auto elapsedNow = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - searchStartTime).count();
 
-        // Hard abort if we're already over 90% of budget (shouldn't happen but safety net)
-        if (elapsedNow >= timeLimitMs * 90 / 100) break;
-
-        // Soft stop: don't start a new depth if we've used 50% of budget
-        // (the next depth will take ~2-3x as long as the current one)
-        if (elapsedNow >= timeLimitMs * 50 / 100) break;
+        if (elapsedNow >= timeLimitMs * 65 / 100) break;
 
         // If score is a mate, no need to search deeper
         if (bestScoreThisDepth > 90000 || bestScoreThisDepth < -90000) break;

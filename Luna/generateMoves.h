@@ -148,6 +148,31 @@ void checkTimeBudget()
   // approach move selection. Returns a zero Move when the position does not
   // match (caller then falls back to the full search).
   Move tryEndgameMateMove(Board &board);
+
+  // ---- Bare-mate retrograde tablebase (KQK / KRK) -----------------------
+  // Generated once per piece type (lazily). value[stm][wk][bk][mq] holds the
+  // DTM in plies for WHITE as the strong side (black-winner positions are
+  // looked up after a rank-flip + colour swap). 0 = draw/unknown, 1 = mated,
+  // n>1 = plies to mate. Guarantees shortest stalemate-free mates.
+  static int8_t egKQ[2][64][64][64];
+  static int8_t egKR[2][64][64][64];
+  static bool   egKQbuilt;
+  static bool   egKRbuilt;
+  void buildBareMateTable(bool isRook);
+  int  bareMateDTM(bool isRook, int stm, int wk, int bk, int mq) const;
+  Move bareMateMove(Board &board);   // full controller using the table
+
+  // ---- KPK drive (lone pawn vs bare king) --------------------------------
+  // Distance-to-PROMOTION retrograde table, white as the pawn side.
+  // n>0 = plies until a SAFE promotion (fresh queen not capturable, no
+  // instant stalemate); 0 = draw / unreachable. Black-strong positions are
+  // rank-flipped like the bare-mate tables. Fixes the pre-promotion
+  // shuffle: search can't convert KPvK, this provably can.
+  static int8_t egKP[2][64][64][64];
+  static bool   egKPbuilt;
+  void buildKpkTable();
+  int  kpkDTM(int stm, int wk, int bk, int ps) const;
+  Move kpkMove(Board &board);        // gated controller, null when N/A
   void orderMoves(MoveList& moves, Board& board, int ply, Move ttMove);
   void orderCaptures(MoveList &list, const Board &board);
 
