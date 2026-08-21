@@ -8,6 +8,10 @@
   border-radius: calc(var(--sq) * 0.06);
   overflow: hidden;
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(245, 220, 160, 0.15), 0 0 25px rgba(245, 210, 140, 0.2);
+  /* Let pointer events own touches on the board so pieces can be dragged
+     without the page scrolling underneath (mobile) */
+  touch-action: none;
+  -webkit-touch-callout: none;
 }
 
 .square {
@@ -95,6 +99,49 @@
 
 .square.dark .piece {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
+}
+
+/* The piece being dragged: dim it on its origin square */
+.square.drag-origin .piece {
+  opacity: 0.25;
+  transform: scale(0.9);
+}
+
+/* Origin square flashes red + shakes when a drag ends on an illegal square */
+.square.drag-rejected {
+  animation: reject-shake 0.4s ease;
+}
+.square.drag-rejected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 82, 82, 0.45);
+  pointer-events: none;
+  animation: reject-fade 0.5s ease forwards;
+}
+@keyframes reject-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  50% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+}
+@keyframes reject-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Floating clone that follows the pointer/finger – positioned by its
+   center (left/top set from JS) */
+.drag-piece {
+  position: fixed;
+  z-index: 100;
+  width: calc(var(--sq) * 0.82);
+  height: calc(var(--sq) * 0.82);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.5));
+  will-change: left, top;
 }
 
 .legal-move {

@@ -1,6 +1,7 @@
 import "./ChessBoard.css";
 import parseFen from "./parseFen";
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { uciToSan } from "./uciToSan";
 
 import WhitePawn from "../assets/pieces/WhitePawn.svg";
@@ -119,6 +120,12 @@ function ChessBoard() {
   const [gameStarted, setGameStarted] = useState(false);
   const [selectedSquare, setSelectedSquare] = useState(null);
   const [legalMoves, setLegalMoves] = useState([]);
+  // Every legal-move update must also refresh the ref used by the drag
+  // pointerup handler (which would otherwise read a stale closure).
+  function setLegalBoth(list) {
+    legalMovesRef.current = list;
+    setLegalMoves(list);
+  }
   const [gameStatus, setGameStatus] = useState("playing");
   const [pendingPromotion, setPendingPromotion] = useState(null);
   const [kingInCheck, setKingInCheck] = useState(false);
@@ -135,6 +142,15 @@ function ChessBoard() {
   // Mirrors playerSide for code running in timeouts/closures, which would
   // otherwise capture a stale value from the render that scheduled them.
   const playerSideRef = useRef("white");
+  // Drag-and-drop: ghost follows the pointer via direct DOM writes (no
+  // re-render per move); refs survive across the pointer event listeners.
+  const ghostRef = useRef(null);
+  const dragRef = useRef(null);
+  const boardRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const legalMovesRef = useRef([]);
+  const [dragOrigin, setDragOrigin] = useState(null);
+  const [dragRejected, setDragRejected] = useState(null);
   const moveListRef = useRef(null);
   const [copied, setCopied] = useState(false);
 
@@ -359,7 +375,7 @@ function ChessBoard() {
     window.luna.initEngine();
     setBoard(parseFen(INITIAL_FEN));
     setSelectedSquare(null);
-    setLegalMoves([]);
+    setLegalBoth([]);
     setGameStatus("playing");
     setPendingPromotion(null);
     setMoveHistory([]);
@@ -397,7 +413,7 @@ function ChessBoard() {
     setBoard(parseFen(newFen));
     setPendingPromotion(null);
     setSelectedSquare(null);
-    setLegalMoves([]);
+    setLegalBoth([]);
     updateCheckStatus();
 
     // Add promotion move to history (human side)
@@ -447,7 +463,7 @@ function handleUndo() {
       }
       setPendingPromotion(null);
       setSelectedSquare(null);
-      setLegalMoves([]);
+      setLegalBoth([]);
       return;
     }
 
@@ -485,7 +501,7 @@ function handleUndo() {
     setMoveHistory(rebuildHistoryFromStack(stack));
     setBoard(parseFen(window.luna.getFen()));
     setSelectedSquare(null);
-    setLegalMoves([]);
+    setLegalBoth([]);
     setGameStatus(window.luna.getGameStatus());
     updateCheckStatus();
 
@@ -498,7 +514,169 @@ function handleUndo() {
     }
   }
 
+  // Shared selection helper – keeps state and the drag-safe ref in sync
+  function selectSquare(row, col) {
+    setSelectedSquare([row, col]);
+    const square = (7 - row) * 8 + col;
+    const movesStr = window.luna?.getLegalMoves(square);
+    const list = movesStr && movesStr !== ""
+      ? movesStr.split(",").map(s => {
+          const sq = parseInt(s);
+          return [7 - Math.floor(sq / 8), sq % 8];
+        })
+      : [];
+    setLegalBoth(list);
+  }
+
+  // Execute a move from board coords (shared by click-to-move and drag-drop)
+  function executeMove(fromRow, fromCol, toRow, toCol) {
+    const from = (7 - fromRow) * 8 + fromCol;
+    const to = (7 - toRow) * 8 + toCol;
+    const movingPiece = board[fromRow][fromCol];
+    const capturedPiece = board[toRow][toCol];
+    let capturedKey = null;
+
+    // Record capture
+    if (capturedPiece) {
+      capturedKey = `${capturedPiece.color}_${capturedPiece.type}`;
+      if (movingPiece.color === 'white') {
+        setCapturedWhite(prev => [...prev, capturedKey]);
+      } else {
+        setCapturedBlack(prev => [...prev, capturedKey]);
+      }
+    }
+
+    // Check for pawn promotion
+    if (movingPiece.type === "pawn" && (toRow === 0 || toRow === 7)) {
+      setPendingPromotion({ from, to, color: movingPiece.color, captured: capturedKey });
+      setSelectedSquare(null);
+      setLegalBoth([]);
+      return;
+    }
+
+    // Normal move – add SAN before changing board
+    const san = uciToSan(board, fromRow, fromCol, toRow, toCol, null);
+    addMoveToHistory(movingPiece.color === "white" ? "white" : "black", san);
+    pushPly(movingPiece.color === "white" ? "white" : "black", san, capturedKey);
+
+    // Play immediately – before the synchronous engine work – so the
+    // sound lands exactly on the drop/click instead of trailing it.
+    const isCastle = movingPiece.type === "king" && Math.abs(toCol - fromCol) === 2;
+    playSound(isCastle ? "castle" : capturedPiece ? "capture" : "move");
+
+    const newFen = window.luna.makeMove(from, to, "");
+    setBoard(parseFen(newFen));
+    setLastMove([[fromRow, fromCol], [toRow, toCol]]);
+    setSelectedSquare(null);
+    setLegalBoth([]);
+    updateCheckStatus();
+
+    // Engine response
+    scheduleEngineReply(board);
+  }
+
+  // ---- Drag and drop (pointer events unify mouse + touch) ----
+
+  function handlePointerDown(e, displayRow, displayCol) {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (gameStatus !== "playing") return;
+    if (engineTimerRef.current || engineBusyRef.current) return;
+
+    const row = boardFlipped ? 7 - displayRow : displayRow;
+    const col = boardFlipped ? 7 - displayCol : displayCol;
+    const piece = board[row][col];
+    if (!piece || piece.color !== playerSide) return; // only your own pieces
+
+    e.preventDefault();
+    suppressClickRef.current = true; // the click after this gesture is redundant
+    selectSquare(row, col);
+
+    dragRef.current = {
+      fromRow: row,
+      fromCol: col,
+      moved: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      src: pieces[`${piece.color}_${piece.type}`],
+    };
+    setDragOrigin([row, col]);
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+  }
+
+  function handlePointerMove(e) {
+    const info = dragRef.current;
+    if (!info) return;
+
+    // Small dead-zone so a plain tap never flashes the ghost
+    if (!info.moved && Math.hypot(e.clientX - info.startX, e.clientY - info.startY) < 6) {
+      return;
+    }
+    info.moved = true;
+
+    const ghost = ghostRef.current;
+    if (ghost) {
+      if (ghost.style.display === "none") {
+        ghost.src = info.src;
+        ghost.style.display = "block";
+      }
+      ghost.style.left = e.clientX + "px";
+      ghost.style.top = e.clientY + "px";
+    }
+  }
+
+  function cleanupDrag() {
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerCancel);
+    dragRef.current = null;
+    setDragOrigin(null);
+    if (ghostRef.current) ghostRef.current.style.display = "none";
+    // The click following this gesture may never fire (drop outside the
+    // board) – clear the suppression on the next tick as a fallback.
+    setTimeout(() => { suppressClickRef.current = false; }, 0);
+  }
+
+  function handlePointerUp(e) {
+    const info = dragRef.current;
+    if (!info) { cleanupDrag(); return; }
+    if (!info.moved) { cleanupDrag(); return; } // simple tap: keep selection
+
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const sqEl = el && el.closest ? el.closest(".square") : null;
+    if (sqEl) {
+      const dr = parseInt(sqEl.dataset.dr, 10);
+      const dc = parseInt(sqEl.dataset.dc, 10);
+      const row = boardFlipped ? 7 - dr : dr;
+      const col = boardFlipped ? 7 - dc : dc;
+      const isLegal = legalMovesRef.current.some(m => m[0] === row && m[1] === col);
+      if (isLegal) {
+        cleanupDrag();
+        executeMove(info.fromRow, info.fromCol, row, col);
+        return;
+      }
+      // Dropping back on its own square = "put it back", not an error
+      if (row === info.fromRow && col === info.fromCol) {
+        cleanupDrag();
+        return;
+      }
+    }
+    // Illegal drop: buzz + flash the origin square so the user knows
+    playSound("illegal");
+    setDragRejected([info.fromRow, info.fromCol]);
+    setTimeout(() => setDragRejected(null), 500);
+    cleanupDrag(); // illegal or off-board drop: snap back, selection stays
+  }
+
+  function handlePointerCancel() {
+    cleanupDrag();
+  }
+
   function handleClick(displayRow, displayCol) {
+    // Pointer-down already handled selection for this gesture
+    if (suppressClickRef.current) { suppressClickRef.current = false; return; }
     if (gameStatus !== "playing") return;
     if (engineTimerRef.current || engineBusyRef.current) return; // engine is moving
 
@@ -511,72 +689,17 @@ function handleUndo() {
     if (!piece && !selectedSquare) return;
 
     if (piece && !selectedSquare) {
-      setSelectedSquare([row, col]);
-      const square = (7 - row) * 8 + col;
-      const movesStr = window.luna?.getLegalMoves(square);
-      if (movesStr && movesStr !== "") {
-        const moves = movesStr.split(",").map(s => {
-          const sq = parseInt(s);
-          return [7 - Math.floor(sq / 8), sq % 8];
-        });
-        setLegalMoves(moves);
-      } else {
-        setLegalMoves([]);
-      }
+      selectSquare(row, col);
       return;
     }
 
     const isLegalMove = legalMoves.some(m => m[0] === row && m[1] === col);
     if (isLegalMove) {
-      const fromRowSel = selectedSquare[0];
-      const fromColSel = selectedSquare[1];
-      const from = (7 - fromRowSel) * 8 + fromColSel;
-      const to = (7 - row) * 8 + col;
-      const movingPiece = board[fromRowSel][fromColSel];
-      const capturedPiece = board[row][col];
-      let capturedKey = null;
-
-      // Record capture
-      if (capturedPiece) {
-        capturedKey = `${capturedPiece.color}_${capturedPiece.type}`;
-        if (movingPiece.color === 'white') {
-          setCapturedWhite(prev => [...prev, capturedKey]);
-        } else {
-          setCapturedBlack(prev => [...prev, capturedKey]);
-        }
-      }
-
-      // Check for pawn promotion
-      if (movingPiece.type === "pawn" && (row === 0 || row === 7)) {
-        setPendingPromotion({ from, to, color: movingPiece.color, captured: capturedKey });
-        setSelectedSquare(null);
-        setLegalMoves([]);
-        return;
-      }
-
-      // Normal move – add SAN before changing board
-      const san = uciToSan(board, fromRowSel, fromColSel, row, col, null);
-      addMoveToHistory(movingPiece.color === "white" ? "white" : "black", san);
-      pushPly(movingPiece.color === "white" ? "white" : "black", san, capturedKey);
-
-      // Play immediately – before the synchronous engine work – so the
-      // sound lands exactly on the click instead of trailing it.
-      const isCastle = movingPiece.type === "king" && Math.abs(col - fromColSel) === 2;
-      playSound(isCastle ? "castle" : capturedPiece ? "capture" : "move");
-
-      const newFen = window.luna.makeMove(from, to, "");
-      setBoard(parseFen(newFen));
-      setLastMove([[fromRowSel, fromColSel], [row, col]]);
-      setSelectedSquare(null);
-      setLegalMoves([]);
-      updateCheckStatus();
-
-      // Engine response
-      scheduleEngineReply(board);
+      executeMove(selectedSquare[0], selectedSquare[1], row, col);
     } else {
       playSound("illegal");
       setSelectedSquare(null);
-      setLegalMoves([]);
+      setLegalBoth([]);
     }
   }
 
@@ -691,7 +814,7 @@ function handleUndo() {
       {/* Left: Chess board */}
       <div className="board-container">
         <div className="board-wrapper">
-          <div className="board">
+          <div className="board" ref={boardRef}>
           {Array.from({ length: 8 }, (_, dr) =>
             Array.from({ length: 8 }, (_, dc) => {
               // Render in display order; when flipped (black player), the
@@ -702,6 +825,8 @@ function handleUndo() {
               return (
               <div
                 key={`${dr}-${dc}`}
+                data-dr={dr}
+                data-dc={dc}
                 className={`square ${(dr + dc) % 2 === 0 ? "light" : "dark"} ${
                   lastMove && (
                     (lastMove[0][0] === r && lastMove[0][1] === c) ||
@@ -713,8 +838,13 @@ function handleUndo() {
                   legalMoves.some((m) => m[0] === r && m[1] === c) ? "legal-move" : ""
                 } ${
                   kingInCheck && kingSquare && kingSquare[0] === r && kingSquare[1] === c ? "in-check" : ""
+                } ${
+                  dragOrigin && dragOrigin[0] === r && dragOrigin[1] === c ? "drag-origin" : ""
+                } ${
+                  dragRejected && dragRejected[0] === r && dragRejected[1] === c ? "drag-rejected" : ""
                 }`}
                 onClick={() => handleClick(dr, dc)}
+                onPointerDown={(e) => handlePointerDown(e, dr, dc)}
               >
                 {dc === 0 && (
                   <span className="coord coord-rank">
@@ -739,6 +869,20 @@ function handleUndo() {
             })
           )}
           </div>
+
+          {/* Floating piece that follows the pointer while dragging.
+              Portaled to <body>: backdrop-filter/transform on ancestors
+              would otherwise become its position:fixed reference frame. */}
+          {createPortal(
+            <img
+              ref={ghostRef}
+              className="drag-piece"
+              alt=""
+              draggable="false"
+              style={{ display: "none" }}
+            />,
+            document.body
+          )}
 
           {pendingPromotion && (
             <div className="promotion-overlay">
