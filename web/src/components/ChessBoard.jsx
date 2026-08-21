@@ -53,15 +53,61 @@ function getPieceValue(pieceKey) {
   }
 }
 
-const soundMap = {
-    move: new Audio(MoveAudio),
-    capture: new Audio(CaptureMoveAudio),
-    check: new Audio(CheckMoveAudio),
-    illegal: new Audio(IllegalMoveAudio),
-    castle: new Audio(CastlingAudio),
-    checkmate: new Audio(CheckMateAudio),
-    promotion: new Audio(PromotionAudio),
-}; 
+const soundFiles = {
+  move: MoveAudio,
+  capture: CaptureMoveAudio,
+  check: CheckMoveAudio,
+  illegal: IllegalMoveAudio,
+  castle: CastlingAudio,
+  checkmate: CheckMateAudio,
+  promotion: PromotionAudio,
+};
+
+// Low-latency sound engine: all clips are fetched and decoded once into an
+// AudioContext, so playback starts instantly instead of paying the
+// HTMLAudioElement startup cost on every move. The context is created on the
+// first user gesture (browser autoplay policy) – not at page load.
+let audioCtx = null;
+const soundBuffers = {};
+const fallbackEls = {};
+let soundsPreloading = false;
+
+function ensureAudioCtx() {
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch {
+      return null;
+    }
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+function preloadSounds() {
+  if (soundsPreloading || !audioCtx) return;
+  soundsPreloading = true;
+  Object.entries(soundFiles).forEach(([type, src]) => {
+    fetch(src)
+      .then(r => r.arrayBuffer())
+      .then(ab => audioCtx.decodeAudioData(ab))
+      .then(buf => { soundBuffers[type] = buf; })
+      .catch(() => {
+        if (!fallbackEls[type]) fallbackEls[type] = new Audio(src);
+      });
+  });
+}
+
+if (typeof window !== "undefined") {
+  const kick = () => {
+    ensureAudioCtx();
+    preloadSounds();
+    window.removeEventListener("pointerdown", kick);
+    window.removeEventListener("keydown", kick);
+  };
+  window.addEventListener("pointerdown", kick);
+  window.addEventListener("keydown", kick);
+}
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
@@ -287,10 +333,10 @@ function ChessBoard() {
         const sanEngine = uciToSan(boardBefore || board, engineFromRow, engineFromCol, engineToRow, engineToCol, promotion);
         addMoveToHistory(engineColor, sanEngine);
         pushPly(engineColor, sanEngine, engineCapturedKey);
+        playSound(promotion ? "promotion" : engineCaptured ? "capture" : "move");
         const newFen2 = window.luna.makeMove(fromSq, toSq, promotion ? promotion[0] : "");
         setBoard(parseFen(newFen2));
         setLastMove([[engineFromRow, engineFromCol], [engineToRow, engineToCol]]);
-        playSound(promotion ? "promotion" : engineCaptured ? "capture" : "move");
         updateCheckStatus();
       }
       const status = window.luna.getGameStatus();
@@ -371,11 +417,18 @@ function ChessBoard() {
 
 
 function playSound(type) {
-    const sound = soundMap[type];
-    if (sound) {
-        sound.currentTime = 0;
-        sound.play();
-    }
+  ensureAudioCtx();
+  const buf = soundBuffers[type];
+  if (buf && audioCtx && audioCtx.state === "running") {
+    const node = audioCtx.createBufferSource();
+    node.buffer = buf;
+    node.connect(audioCtx.destination);
+    node.start(0);
+    return;
+  }
+  const el = fallbackEls[type] || (fallbackEls[type] = new Audio(soundFiles[type]));
+  el.currentTime = 0;
+  el.play().catch(() => {});
 }
 
 function handleUndo() {
@@ -506,12 +559,14 @@ function handleUndo() {
       addMoveToHistory(movingPiece.color === "white" ? "white" : "black", san);
       pushPly(movingPiece.color === "white" ? "white" : "black", san, capturedKey);
 
+      // Play immediately – before the synchronous engine work – so the
+      // sound lands exactly on the click instead of trailing it.
+      const isCastle = movingPiece.type === "king" && Math.abs(col - fromColSel) === 2;
+      playSound(isCastle ? "castle" : capturedPiece ? "capture" : "move");
+
       const newFen = window.luna.makeMove(from, to, "");
       setBoard(parseFen(newFen));
       setLastMove([[fromRowSel, fromColSel], [row, col]]);
-      const isCastle = movingPiece.type === "king" && Math.abs(col - fromColSel) === 2;
-      console.log("about to play sound");
-      playSound(isCastle ? "castle" : capturedPiece ? "capture" : "move");
       setSelectedSquare(null);
       setLegalMoves([]);
       updateCheckStatus();
@@ -528,14 +583,111 @@ function handleUndo() {
   // Calculate material advantage
   const whiteMaterial = capturedWhite.reduce((sum, key) => sum + getPieceValue(key), 0);
   const blackMaterial = capturedBlack.reduce((sum, key) => sum + getPieceValue(key), 0);
-  const materialAdvantage = whiteMaterial - blackMaterial;
-  const advantageText = materialAdvantage > 0 ? `+${materialAdvantage}` : materialAdvantage < 0 ? `${materialAdvantage}` : '';
 
   // Board is flipped when the player sits on the black side
   const boardFlipped = playerSide === "black";
 
+  // ---- Dashboard model -------------------------------------------------
+  // capturedWhite/capturedBlack are appended when a WHITE/BLACK piece makes
+  // a capture, i.e. they are that side's TROPHIES. Badge goes on whichever
+  // side has captured more value.
+  const engineColor = playerSide === "white" ? "black" : "white";
+  const trophies = { white: capturedWhite, black: capturedBlack };
+  const takenValue = { white: whiteMaterial, black: blackMaterial };
+  const materialDiff = takenValue.white - takenValue.black;
+  const badgeFor = (color) =>
+    color === "white"
+      ? materialDiff > 0 ? `+${materialDiff}` : ""
+      : materialDiff < 0 ? `+${-materialDiff}` : "";
+
+  const yourTurn =
+    gameStatus === "playing" &&
+    ((moveStack.length % 2 === 0) === (playerSide === "white"));
+  const gameNotStarted = !gameStarted && moveStack.length === 0;
+  const statusText = gameNotStarted
+    ? "Choose your side"
+    : gameStatus === "checkmate"
+    ? "Checkmate"
+    : gameStatus === "stalemate"
+    ? "Stalemate"
+    : gameStatus === "draw"
+    ? "Draw"
+    : kingInCheck
+    ? "Check!"
+    : yourTurn
+    ? "Your move"
+    : "Luna is thinking";
+
+  // Render a SAN move with its piece icon in front (e.g. [N]f3, [R]xe8+,
+  // [K]e1 for castling). Pawn moves get the pawn glyph.
+  function renderSan(san, color) {
+    if (!san || san === "—") return san;
+    const pieceType =
+      san.startsWith("O-O") ? "king"
+      : { N: "knight", B: "bishop", R: "rook", Q: "queen", K: "king" }[san[0]];
+    return (
+      <>
+        <img className="san-piece" src={pieces[`${color}_${pieceType || "pawn"}`]} alt="" />
+        {pieceType ? san.slice(1) : san}
+      </>
+    );
+  }
+
+  function PlayerCard({ color, name, className = "" }) {
+    return (
+      <div className={`player-card ${className}`}>
+        <img className="player-icon" src={pieces[`${color}_king`]} alt="" />
+        <div className="player-meta">
+          <span className="player-name">
+            {name}
+            <span className={`player-side ${color}`}>
+              {color === "white" ? "White" : "Black"}
+            </span>
+          </span>
+          <div className="player-trophies">
+            {trophies[color].map((key, i) => (
+              <img key={i} src={pieces[key]} alt="" />
+            ))}
+            {badgeFor(color) && (
+              <span className="trophies-badge">{badgeFor(color)}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Shared action buttons – rendered under the board on mobile and at the
+  // bottom of the panel on desktop.
+  function gameActions() {
+    return gameNotStarted ? (
+      <>
+        <button className="side-option" onClick={() => playAs("white")}>
+          <img src={WhiteKing} alt="" />
+          <span>Play White</span>
+        </button>
+        <button className="side-option" onClick={() => playAs("black")}>
+          <img src={BlackKing} alt="" />
+          <span>Play Black</span>
+        </button>
+      </>
+    ) : (
+      <>
+        <button className="ghost-btn" onClick={handleUndo} disabled={moveStack.length === 0}>
+          Undo
+        </button>
+        <button className="ghost-btn accent" onClick={resetGame}>
+          New Game
+        </button>
+      </>
+    );
+  }
+
   return (
     <div className="chess-dashboard">
+      {/* Mobile: engine card sits on top of the board */}
+      <PlayerCard color={engineColor} name="Luna" className="player-strip mobile-only" />
+
       {/* Left: Chess board */}
       <div className="board-container">
         <div className="board-wrapper">
@@ -609,116 +761,50 @@ function handleUndo() {
         </div>
       </div>
 
-      {/* Right: Dashboard */}
+      {/* Mobile: your card sits under the board, right above the actions */}
+      <PlayerCard color={playerSide} name="You" className="player-strip mobile-only" />
+
+      {/* Mobile-only action row: sits right under the board */}
+      <div className="board-actions">{gameActions()}</div>
+
+      {/* Right: Dashboard – quiet player-card ledger */}
       <div className="dashboard-panel">
-        {/* Top bar: status + new game */}
-        <div className="game-status-bar">
-          <div className="game-status-message">
-            {gameStatus === "playing"
-              ? (kingInCheck ? "CHECK!" : "Playing")
-              : gameStatus === "checkmate"
-              ? "Checkmate!"
-              : gameStatus === "stalemate"
-              ? "Stalemate!"
-              : "Draw!"}
-          </div>
-          <button className="new-game-btn" onClick={resetGame}>New Game</button>
-        </div>
+        <PlayerCard color={engineColor} name="Luna" className="desktop-only" />
 
-        {/* Captured pieces section – with icons */}
-        <div className="captured-section">
-          <div className="captured-row">
-            <span className="captured-label">White</span>
-            <div className="captured-pieces">
-              {capturedWhite.map((key, idx) => (
-                <img key={idx} src={pieces[key]} className="captured-piece" alt="" />
-              ))}
-            </div>
-            <span className="material-score">{whiteMaterial > 0 ? `+${whiteMaterial}` : ''}</span>
-          </div>
-          <div className="captured-row">
-            <span className="captured-label">Black</span>
-            <div className="captured-pieces">
-              {capturedBlack.map((key, idx) => (
-                <img key={idx} src={pieces[key]} className="captured-piece" alt="" />
-              ))}
-            </div>
-            <span className="material-score">{blackMaterial > 0 ? `+${blackMaterial}` : ''}</span>
-          </div>
-          {advantageText && <div className="advantage-indicator">{advantageText}</div>}
-        </div>
-
-        {/* Game actions – choose side before starting, undo during play */}
-        <div className="game-actions">
-          {!gameStarted && moveStack.length === 0 && (
-            <div className="side-picker" title="Play as">
-              <button
-                className={`side-btn ${playerSide === "white" ? "active" : ""}`}
-                onClick={() => playAs("white")}
-              >
-                White
-              </button>
-              <button
-                className={`side-btn ${playerSide === "black" ? "active" : ""}`}
-                onClick={() => playAs("black")}
-              >
-                Black
-              </button>
-            </div>
-          )}
-          <button
-            className="control-btn undo-btn"
-            onClick={handleUndo}
-            disabled={moveStack.length === 0}
-            title="Undo move"
-          >
-            <span className="control-btn-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 7v6h6" />
-                <path d="M21 17a9 9 0 0 0-15-6.7L3 13" />
-              </svg>
-            </span>
-            <span>Undo</span>
-          </button>
-        </div>
-
-        {/* Move history – clean table with copy support */}
-        <div className="move-history" ref={moveListRef}>
-          <div className="move-history-header">
-            <h3>Move History</h3>
+        <div className="history-block">
+          <div className="history-top">
+            <span
+              className={`status-dot ${
+                gameStatus !== "playing" ? "ended" : kingInCheck ? "check" : ""
+              }`}
+            />
+            <span className="status-text">{statusText}</span>
             <button
-              className="copy-pgn-btn"
+              className="ghost-btn small"
               onClick={copyPgn}
               disabled={moveHistory.length === 0}
               title="Copy the game moves (PGN) to your clipboard"
             >
-              {copied ? "Copied!" : "Copy PGN"}
+              {copied ? "Copied" : "PGN"}
             </button>
           </div>
-          <div className="move-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>White</th>
-                  <th>Black</th>
-                </tr>
-              </thead>
-              <tbody>
-                {moveHistory.map((move, idx) => (
-                  <tr
-                    key={idx}
-                    className={idx === moveHistory.length - 1 ? "last-move-row" : ""}
-                  >
-                    <td>{idx + 1}</td>
-                    <td>{move.white || '—'}</td>
-                    <td>{move.black || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="move-ledger" ref={moveListRef}>
+            {moveHistory.map((m, i) => (
+              <div
+                key={i}
+                className={`ledger-row ${i === moveHistory.length - 1 ? "current" : ""}`}
+              >
+                <span className="ledger-num">{i + 1}</span>
+                <span className="ledger-san">{renderSan(m.white, "white")}</span>
+                <span className="ledger-san">{renderSan(m.black, "black")}</span>
+              </div>
+            ))}
           </div>
         </div>
+
+        <PlayerCard color={playerSide} name="You" className="desktop-only" />
+
+        <div className="panel-actions">{gameActions()}</div>
       </div>
     </div>
   );
